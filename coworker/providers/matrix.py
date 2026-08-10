@@ -16,9 +16,9 @@ where the vendor spec wasn't re-checked stay ``None`` — the meter simply hides
 showing a made-up denominator. Values entered 2026-07-28 from vendor docs; verify alongside
 the id refresh.
 
-Resellers: Together + Fireworks + OpenRouter. TODO: add Groq entries here AND its
-descriptor in ``registry.py`` once the current provider surface is tested — deliberately
-deferred to bound how much needs verifying at once.
+Resellers: Together + Fireworks + OpenRouter + Vercel AI Gateway. TODO: add Groq
+entries here AND its descriptor in ``registry.py`` once the current provider surface
+is tested — deliberately deferred to bound how much needs verifying at once.
 """
 
 from __future__ import annotations
@@ -36,6 +36,11 @@ _AGENTIC = ModelCapabilities(
 # no inline file part — checked 2026-07-17), so those fall back via pdf_support.py.
 _AGENTIC_VISION = ModelCapabilities(
     tools=True, vision=True, pdf=True, parallel_tool_calls=True, streaming=True
+)
+# OpenAI-compatible gateways support images, while PDF/file-part behavior remains
+# provider-specific and therefore uses the normal PDF fallback path.
+_AGENTIC_VISION_COMPAT = ModelCapabilities(
+    tools=True, vision=True, parallel_tool_calls=True, streaming=True
 )
 
 
@@ -178,6 +183,25 @@ MATRIX: dict[str, ModelEntry] = {
             tools=True, vision=True, parallel_tool_calls=True, streaming=True
         ),
         1_000_000,
+    ),
+    # Vercel AI Gateway model ids are namespaced by creator and routed through one key.
+    "vercel:anthropic/claude-haiku-4.5": ModelEntry(
+        "Claude Haiku 4.5 · via Vercel AI Gateway", _AGENTIC_VISION_COMPAT, 200_000
+    ),
+    "vercel:zai/glm-5.2": ModelEntry(
+        "GLM-5.2 · via Vercel AI Gateway", _AGENTIC, 1_000_000
+    ),
+    "vercel:deepseek/deepseek-v4-flash": ModelEntry(
+        "DeepSeek V4 Flash · via Vercel AI Gateway", _AGENTIC, 1_000_000
+    ),
+    "vercel:openai/gpt-5.4-mini": ModelEntry(
+        "GPT-5.4 mini · via Vercel AI Gateway", _AGENTIC_VISION_COMPAT, 400_000
+    ),
+    "vercel:google/gemini-3.6-flash": ModelEntry(
+        "Gemini 3.6 Flash · via Vercel AI Gateway", _AGENTIC_VISION_COMPAT, 1_000_000
+    ),
+    "vercel:moonshotai/kimi-k2.7-code": ModelEntry(
+        "Kimi K2.7 Code · via Vercel AI Gateway", _AGENTIC_VISION_COMPAT, 256_000
     ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
