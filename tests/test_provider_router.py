@@ -183,6 +183,12 @@ def test_capabilities_lmstudio():
     assert caps.vision is False
 
 
+def test_capabilities_ollama_vision_name_heuristic():
+    assert capabilities_for("ollama:qwen3-vl:8b").vision is True
+    assert capabilities_for("ollama:llava:latest").vision is True
+    assert capabilities_for("ollama:qwen2.5-coder:32b").vision is False
+
+
 # -- tool-call salvage (Ollama emits tool calls as text) ------------------------
 def test_salvage_bare_json_object():
     calls = _salvage_tool_calls_from_text(

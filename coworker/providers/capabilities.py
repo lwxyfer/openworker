@@ -25,7 +25,13 @@ def capabilities_for(model: str) -> ModelCapabilities:
     # Local servers (Ollama, LM Studio) host models that vary widely and many fake/mishandle
     # parallel tool calls — assume tools work (we only point at tool-capable models) but stay
     # conservative otherwise.
-    if provider in ("ollama", "lmstudio"):
+    if provider == "ollama":
+        vision_patterns = ("-vl", "vision", "llava", "bakllava", "cogvlm", "minicpm-v")
+        has_vision = any(pattern in name for pattern in vision_patterns)
+        return ModelCapabilities(
+            tools=True, vision=has_vision, parallel_tool_calls=False, streaming=True
+        )
+    if provider == "lmstudio":
         return ModelCapabilities(
             tools=True, vision=False, parallel_tool_calls=False, streaming=True
         )
