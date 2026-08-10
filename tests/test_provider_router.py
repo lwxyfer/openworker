@@ -189,6 +189,19 @@ def test_capabilities_ollama_vision_name_heuristic():
     assert capabilities_for("ollama:qwen2.5-coder:32b").vision is False
 
 
+def test_remove_provider_falls_back_to_usable_model(tmp_path, monkeypatch):
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(SessionManager, "_local_alive", lambda self, name: True)
+    manager = SessionManager(data_dir=tmp_path)
+    manager.set_provider("openai", {"api_key": "sk-x"})
+    manager.add_model("ollama:llama3.3")
+    manager.remove_provider("openai")
+    assert manager.model == "ollama:llama3.3"
+    assert manager.get_settings()["model_ready"] is True
+
+
 # -- tool-call salvage (Ollama emits tool calls as text) ------------------------
 def test_salvage_bare_json_object():
     calls = _salvage_tool_calls_from_text(

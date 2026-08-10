@@ -1643,7 +1643,21 @@ class SessionManager:
             return {"ok": False, "error": f"unknown provider: {name}"}
         self.secrets.delete(f"provider:{name}")
         self._refresh_provider(name)
+        if self._model_provider(self.model) == name:
+            fallback = next(
+                (
+                    model
+                    for model in self._curated_models()
+                    if model != self.model and self._model_selectable(model)
+                ),
+                None,
+            )
+            if fallback:
+                self.set_default_model(fallback)
         return {"ok": True, "provider": name}
+
+    def _model_selectable(self, model: str) -> bool:
+        return self._provider_available(self._model_provider(model))
 
     def verify_provider(
         self, name: str, fields: Optional[dict[str, Any]]
@@ -1923,10 +1937,7 @@ class SessionManager:
         # (it's hidden behind the "No model" state until a provider is connected anyway).
         # Local servers (Ollama, LM Studio) are keyless, so "configured" is meaningless —
         # their models show only while the server answers (cached liveness probe).
-        def _selectable(m: str) -> bool:
-            return self._provider_available(self._model_provider(m))
-
-        ready_models = [m for m in self._curated_models() if _selectable(m)]
+        ready_models = [m for m in self._curated_models() if self._model_selectable(m)]
         selectable = list(ready_models)
         if self.model not in ready_models:
             selectable.insert(0, self.model)
