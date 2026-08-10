@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { InboxItem } from "../api";
 import type { QuestionOption } from "../types";
 import { humanizeApprovalTitle } from "../humanize";
@@ -16,6 +16,8 @@ import {
 // always-available free-text escape, with optional multi-select. OPE-51 adds rich options
 // ({label, description, recommended, preview}) and grouped questions (a stepper) — plain-string
 // options and single questions render exactly as before.
+
+export const QUESTION_CANCELLED = "__cancelled__";
 
 // Shared styles (mock parity — same language as SourcesDrawer/PersonaView).
 const SEC = "text-[11px] uppercase tracking-[0.05em] text-faint font-semibold";
@@ -89,7 +91,15 @@ function specsFor(item: InboxItem): QSpec[] {
 
 // -- one question (options + free-text escape) --------------------------------
 
-function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) => void }) {
+function QuestionBlock({
+  spec,
+  onAnswer,
+  onCancel,
+}: {
+  spec: QSpec;
+  onAnswer: (a: string) => void;
+  onCancel: () => void;
+}) {
   const [selected, setSelected] = useState<string[]>([]);
   const [text, setText] = useState("");
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -109,6 +119,11 @@ function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) 
   const previewIdx =
     hoverIdx ?? (selIdx >= 0 && options[selIdx].preview ? selIdx : options.findIndex((o) => o.preview));
   const preview = previewIdx >= 0 ? options[previewIdx].preview : "";
+  const cancelButton = () => (
+    <button type="button" className={BTN_BORDERED} title="Cancel (Esc)" onClick={onCancel}>
+      Cancel
+    </button>
+  );
 
   const recommendedTag = (
     <span className="text-[10px] uppercase tracking-[0.04em] font-semibold text-ok bg-okSoft border border-okLine rounded-full px-1.5 py-px shrink-0">
@@ -183,7 +198,8 @@ function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) 
           </div>
         ))}
       {multi && options.length > 0 && (
-        <div className="mt-2.5">
+        <div className="flex items-center justify-end gap-2 mt-2.5">
+          {cancelButton()}
           <button
             className={BTN_PRIMARY}
             disabled={!selected.length}
@@ -204,11 +220,13 @@ function QuestionBlock({ spec, onAnswer }: { spec: QSpec; onAnswer: (a: string) 
               if (e.key === "Enter" && text.trim()) onAnswer(text);
             }}
           />
+          {cancelButton()}
           <button className={BTN_PRIMARY} disabled={!text.trim()} onClick={() => onAnswer(text)}>
             Send
           </button>
         </div>
       )}
+      {!spec.allowText && !multi && <div className="flex justify-end mt-2.5">{cancelButton()}</div>}
     </>
   );
 }
@@ -219,10 +237,12 @@ function QuestionCard({
   item,
   onResolve,
   chip,
+  compact,
 }: {
   item: InboxItem;
   onResolve: (id: string, resolution: string) => void;
   chip?: ReactNode;
+  compact?: boolean;
 }) {
   const specs = specsFor(item);
   const grouped = (item.questions?.length ?? 0) > 0;
@@ -233,6 +253,19 @@ function QuestionCard({
   // The answer map is keyed by header (falling back to the question text) — the same key the
   // server's answer_result() hands the agent.
   const keyFor = (s: QSpec) => s.header || s.question;
+  const cancel = () => onResolve(item.id, QUESTION_CANCELLED);
+
+  useEffect(() => {
+    if (!compact) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.repeat || e.defaultPrevented) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      cancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [compact, item.id]);
 
   const submit = (a: string) => {
     if (!grouped) {
@@ -283,7 +316,7 @@ function QuestionCard({
       ) : null}
       {chip}
       {/* key={step} resets selection/text/hover state when the stepper advances */}
-      <QuestionBlock key={step} spec={spec} onAnswer={submit} />
+      <QuestionBlock key={step} spec={spec} onAnswer={submit} onCancel={cancel} />
     </>
   );
 }
@@ -368,7 +401,7 @@ export function InboxItemCard({
           </button>
         </div>
       ) : isQuestion ? (
-        <QuestionCard item={item} onResolve={onResolve} chip={chip} />
+        <QuestionCard item={item} onResolve={onResolve} chip={chip} compact={compact} />
       ) : item.kind === "directory" ? (
         <div className="flex items-center gap-2 mt-2.5">
           <button

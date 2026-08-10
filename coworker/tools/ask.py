@@ -238,6 +238,13 @@ def answer_result(item_questions: list, resolution: str | None) -> dict:
     """Shape the ask_user tool result from an Inbox item's resolution string. Grouped items
     resolve with a JSON object string keyed by header-or-question → `{"answers": {...}}`;
     everything else returns the plain `{"answer": str}` shape."""
+    # Keep the sentinel out of model-visible answers: cancellation is an explicit decline.
+    from ..interactions import QUESTION_CANCELLED, QUESTION_INTERRUPTED
+
+    if resolution == QUESTION_CANCELLED:
+        return {"answer": "", "error": "cancelled by user"}
+    if resolution == QUESTION_INTERRUPTED:
+        return {"answer": "", "error": "interrupted by user"}
     if item_questions:
         try:
             parsed = json.loads(resolution or "")

@@ -27,6 +27,7 @@ from ..connections import (
 )
 from ..inbox import InboxStore, args_preview
 from ..inbox_routing import InboxRouting
+from ..interactions import QUESTION_INTERRUPTED
 from ..personas import PersonaRegistry
 from ..personas.registry import set_registry as set_persona_registry
 from ..selfwake import WakeStore
@@ -785,8 +786,12 @@ class SessionManager:
                 return answer_result(item.questions, item.resolution)
             self.persist_session(session_id)  # the pending tool call is now on disk
             await self.mirror_inbox_item(item)
-            answer = await self.inbox.wait(item.id)
-            return answer_result(item.questions, answer)
+            try:
+                answer = await self.inbox.wait(item.id)
+                return answer_result(item.questions, answer)
+            except asyncio.CancelledError:
+                self.inbox.resolve(item.id, QUESTION_INTERRUPTED)
+                raise
 
         return ask
 

@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 from .inbox import KIND_APPROVAL, KIND_QUESTION
 from .tools.ask import option_label
+
+QUESTION_CANCELLED = "__cancelled__"
+QUESTION_INTERRUPTED = "__interrupted__"
 
 
 @dataclass
@@ -41,6 +44,15 @@ def decode(value: str) -> Optional[tuple[str, str]]:
     return None
 
 
+def question_answer(resolution: str) -> dict[str, Any]:
+    """Map the wire sentinel used by Cancel/Esc to an ask_user tool result."""
+    if resolution == QUESTION_CANCELLED:
+        return {"answer": "", "error": "cancelled by user"}
+    if resolution == QUESTION_INTERRUPTED:
+        return {"answer": "", "error": "interrupted by user"}
+    return {"answer": resolution or ""}
+
+
 def buttons_for(item) -> list[Button]:
     """The discrete-choice buttons for an Inbox item, or [] if it has none (free-text question,
     notification, …) — the caller then sends plain text with an "open the app" hint."""
@@ -50,14 +62,15 @@ def buttons_for(item) -> list[Button]:
             Button("Deny", encode(item.id, "deny")),
         ]
     if item.kind == KIND_QUESTION and getattr(item, "questions", None):
-        # Grouped questions (OPE-51): one button row can't answer 2+ questions — send plain text
-        # with the open-the-app hint instead.
-        return []
+        # Grouped questions cannot be answered with one row, but can always be cancelled.
+        return [Button("Cancel", encode(item.id, QUESTION_CANCELLED))]
     if item.kind == KIND_QUESTION and getattr(item, "options", None):
         # One button per option; the resolution IS the chosen option's label (what the agent
         # gets). Rich {label, description, …} options button as their label.
         return [
             Button(option_label(opt), encode(item.id, option_label(opt)))
             for opt in item.options
-        ]
+        ] + [Button("Cancel", encode(item.id, QUESTION_CANCELLED))]
+    if item.kind == KIND_QUESTION:
+        return [Button("Cancel", encode(item.id, QUESTION_CANCELLED))]
     return []

@@ -159,6 +159,7 @@ from ..attachments import (
 )
 from ..engine import ApprovalOutcome
 from ..inbox import VIS_INBOX, VIS_INLINE, args_preview
+from ..interactions import QUESTION_INTERRUPTED
 from ..permissions import Mode
 from ..providers import AssistantTurn
 from .manager import SessionManager
@@ -1680,7 +1681,11 @@ def create_app(manager: SessionManager) -> FastAPI:
                             },
                         }
                     )
-            return answer_result(item.questions, await manager.inbox.wait(item.id))
+            try:
+                return answer_result(item.questions, await manager.inbox.wait(item.id))
+            except asyncio.CancelledError:
+                manager.inbox.resolve(item.id, QUESTION_INTERRUPTED)
+                raise
 
         async def directory_requester(args: dict, tool_call_id=None) -> dict:
             # The engine has already emitted DIRECTORY_REQUESTED. Park, await, then apply the grant.

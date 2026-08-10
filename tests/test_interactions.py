@@ -4,7 +4,15 @@ import asyncio
 import json
 
 from coworker.inbox import InboxStore
-from coworker.interactions import Button, buttons_for, decode, encode
+from coworker.interactions import (
+    QUESTION_CANCELLED,
+    QUESTION_INTERRUPTED,
+    Button,
+    buttons_for,
+    decode,
+    encode,
+    question_answer,
+)
 from coworker.connectors.base import InteractionEvent
 from coworker.connectors.senders import _slack_blocks
 from coworker.providers import ModelCapabilities, ProviderClient
@@ -39,12 +47,20 @@ def test_buttons_for_kinds(tmp_path):
 
     q = st.add_question("s1", "Which region?", options=["us-east-1", "us-west-2"])
     qb = buttons_for(q)
-    assert [b.label for b in qb] == ["us-east-1", "us-west-2"]
+    assert [b.label for b in qb] == ["us-east-1", "us-west-2", "Cancel"]
     assert decode(qb[0].value) == (q.id, "us-east-1")  # resolution IS the option text
+    assert decode(qb[-1].value) == (q.id, QUESTION_CANCELLED)
 
-    # free-text question (no options) and notifications get no buttons → "open the app"
-    assert buttons_for(st.add_question("s1", "Say something")) == []
+    # free-text question still gets a Cancel escape hatch; notifications get none.
+    free = buttons_for(st.add_question("s1", "Say something"))
+    assert [b.label for b in free] == ["Cancel"]
     assert buttons_for(st.add_notification("s1", "FYI")) == []
+
+
+def test_question_answer_maps_cancel_sentinels():
+    assert question_answer("us-west-2") == {"answer": "us-west-2"}
+    assert question_answer(QUESTION_CANCELLED) == {"answer": "", "error": "cancelled by user"}
+    assert question_answer(QUESTION_INTERRUPTED) == {"answer": "", "error": "interrupted by user"}
 
 
 def test_slack_blocks_shape():
