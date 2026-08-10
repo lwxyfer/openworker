@@ -56,7 +56,7 @@ fn launch_token() -> String {
 ///      builds used Tauri externalBin).
 ///   4. Dev fallback: the repo venv, relative to this crate (`src-tauri` → repo-root `.venv`;
 ///      `bin/` on POSIX, `Scripts\` on Windows).
-fn server_bin() -> PathBuf {
+fn server_bin(product_name: Option<&str>) -> PathBuf {
     if let Ok(p) = std::env::var("COWORKER_SERVER_BIN") {
         return PathBuf::from(p);
     }
@@ -70,8 +70,12 @@ fn server_bin() -> PathBuf {
             // macOS: Contents/MacOS/<app> → Contents/Resources/sidecar/; Windows: resources
             // unpack next to the exe, so <install>/sidecar/.
             let mut candidates = vec![dir.join("sidecar").join(exe_name)];
-            if let Some(contents) = dir.parent() {
-                candidates.push(contents.join("Resources").join("sidecar").join(exe_name));
+            if let Some(parent) = dir.parent() {
+                candidates.push(parent.join("Resources").join("sidecar").join(exe_name));
+                #[cfg(target_os = "linux")]
+                if let Some(name) = product_name {
+                    candidates.push(parent.join("lib").join(name).join("sidecar").join(exe_name));
+                }
             }
             candidates.push(dir.join(exe_name)); // legacy onefile externalBin slot
             for c in candidates {
@@ -215,13 +219,34 @@ fn start_keep_awake() -> Option<KeepAwakeGuard> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-struct KeepAwakeGuard;
+struct KeepAwakeGuard(Option<Child>);
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+impl Drop for KeepAwakeGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+        }
+    }
+}
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn start_keep_awake() -> Option<KeepAwakeGuard> {
-    // No portable built-in inhibitor on Linux; keep-awake is a no-op (the toggle still reflects
-    // state so the UI behaves, but the OS sleep policy is left to the user).
-    Some(KeepAwakeGuard)
+    Command::new("systemd-inhibit")
+        .args([
+            "--what=sleep",
+            "--why=OpenWorker is working",
+            "--mode=block",
+            "sleep",
+            "infinity",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()
+        .map(|child| KeepAwakeGuard(Some(child)))
+        .or_else(|| Some(KeepAwakeGuard(None)))
 }
 
 // -- native commands (invoked from the SPA via window.__TAURI__.core.invoke) -----------------
@@ -371,11 +396,21 @@ fn voice_input_compatibility() -> (bool, String, Option<String>) {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn voice_input_compatibility() -> (bool, String, Option<String>) {
-    (
-        false,
-        format!("{} · {}", std::env::consts::OS, std::env::consts::ARCH),
-        Some("Voice Input is currently supported on macOS and Windows.".to_owned()),
-    )
+    let arch = std::env::consts::ARCH;
+    let summary = format!("{} · {}", std::env::consts::OS, arch);
+    let (supported, reason) = if arch != "x86_64" && arch != "aarch64" {
+        (
+            false,
+            Some(format!(
+                "Voice Input is not built for the {arch} architecture on Linux."
+            )),
+        )
+    } else if !ocw_stt::input_device_available() {
+        (false, Some("No microphone is available. Connect an audio input device and check your sound settings.".to_owned()))
+    } else {
+        (true, None)
+    };
+    (supported, summary, reason)
 }
 
 #[tauri::command]
@@ -627,7 +662,7 @@ pub fn run() {
         ])
         .setup(move |app| {
             // 1. Start the Python server sidecar on the chosen port (inherits our env).
-            let mut server_cmd = Command::new(server_bin());
+            let mut server_cmd = Command::new(server_bin(app.config().product_name.as_deref()));
             server_cmd
                 .args(["--host", "127.0.0.1", "--port", &port.to_string()])
                 // The sidecar self-exits if we die abruptly (dev-watcher restart, crash) —
