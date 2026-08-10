@@ -104,7 +104,7 @@ def test_every_compat_descriptor_has_matrix_entries():
     """Every OpenAI-compat / reseller descriptor should have at least one
     model in the matrix keyed by <name>:<model>."""
     for d in DESCRIPTORS:
-        if d.name in ("openai", "anthropic", "gemini", "ollama"):
+        if d.name in ("openai", "anthropic", "gemini", "ollama", "lmstudio"):
             continue
         prefix = f"{d.name}:"
         matches = [k for k in MATRIX if k.startswith(prefix)]
@@ -141,7 +141,7 @@ def test_recommended_models_exist_in_matrix():
     full routed id or — for openai — as a bare id).  Ollama is excluded:
     its recommended model is a user-provided local model, never curated."""
     for d in DESCRIPTORS:
-        if not d.recommended_model or d.name == "ollama":
+        if not d.recommended_model or d.name in ("ollama", "lmstudio"):
             continue
         if d.name == "openai":
             assert d.recommended_model in MATRIX, (

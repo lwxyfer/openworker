@@ -120,6 +120,7 @@ describe("ProviderForm auth-method choice", () => {
   });
 });
 
+
 const LMSTUDIO: ProviderInfo = {
   name: "lmstudio",
   title: "LM Studio (local models)",

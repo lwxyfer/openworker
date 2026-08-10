@@ -1180,7 +1180,7 @@ def fetch_provider_models(
             models = [{"id": m["id"], "owned_by": m.get("owned_by")} for m in data]
             return {"ok": True, "models": models}
 
-    except Exception as exc:
+    except Exception as exc:  # DNS/connection/timeout — never let it bubble to a 500
         return {
             "ok": False,
             "error": f"Couldn't reach {d.title} ({exc.__class__.__name__}).",
