@@ -33,6 +33,15 @@ pub const DEFAULT_MODEL_SHA256: &str =
     "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002";
 const WHISPER_SAMPLE_RATE: u32 = 16_000;
 
+/// Whether a microphone is reachable from the default CPAL host.
+///
+/// Hosts use this as a cheap compatibility probe. A broken audio backend must not panic the
+/// desktop shell, so the probe is deliberately wrapped in `catch_unwind`.
+pub fn input_device_available() -> bool {
+    std::panic::catch_unwind(|| cpal::default_host().default_input_device().is_some())
+        .unwrap_or(false)
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DictationStatus {
     pub recording: bool,
@@ -459,7 +468,7 @@ fn start_recording() -> Result<Recording, String> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
-        .ok_or_else(|| "No microphone is available. Check your Mac sound settings.".to_owned())?;
+        .ok_or_else(|| "No microphone is available. Check your sound settings.".to_owned())?;
     let supported = device
         .default_input_config()
         .map_err(|e| format!("Could not open the microphone: {e}"))?;
