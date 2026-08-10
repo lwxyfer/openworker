@@ -274,3 +274,50 @@ def test_shell_commands_not_auto_allowed_by_default(tmp_path):
     ):
         d = eng.evaluate("run_shell", {"command": cmd}, None)
         assert not d.allowed and d.needs_user, cmd
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python3 /tmp/evil.py",
+        "python3 -c 'import shutil'",
+        "node /tmp/evil.js",
+        "npm install attacker-pkg",
+        "env FOO=1 /tmp/evil.sh",
+        "xargs rm",
+        "sudo rm -rf /",
+        "find . -exec touch /tmp/pwned {} +",
+    ],
+)
+def test_bare_allowlist_entry_does_not_auto_run_delegated_execution(tmp_path, command):
+    eng = PermissionEngine(
+        workspace_root=tmp_path,
+        allowed_commands=["python3", "node", "npm", "env", "xargs", "sudo", "find"],
+    )
+    d = eng.evaluate("run_shell", {"command": command}, None)
+    assert not d.allowed and d.needs_user, command
+
+
+@pytest.mark.parametrize("command", ["find . -name '*.py'", "find . -type f -newer setup.py"])
+def test_find_inspection_stays_allowlisted(tmp_path, command):
+    eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=["find"])
+    assert eng.evaluate("run_shell", {"command": command}, None).allowed
+
+
+def test_operation_specific_allowlist_can_opt_into_runner(tmp_path):
+    eng = PermissionEngine(
+        workspace_root=tmp_path,
+        allowed_commands=["npm test", "python3 -m pytest", "find . -exec"],
+    )
+    assert eng.evaluate("run_shell", {"command": "npm test --silent"}, None).allowed
+    assert eng.evaluate("run_shell", {"command": "python3 -m pytest -q"}, None).allowed
+    assert eng.evaluate(
+        "run_shell", {"command": "find . -exec grep -l TODO {} +"}, None
+    ).allowed
+    assert eng.evaluate("run_shell", {"command": "npm install pkg"}, None).needs_user
+
+
+def test_runner_check_handles_windows_executable_spellings(tmp_path):
+    eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=["python3.exe"])
+    d = eng.evaluate("run_shell", {"command": "python3.exe evil.py"}, None)
+    assert not d.allowed and d.needs_user

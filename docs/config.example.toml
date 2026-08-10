@@ -16,11 +16,13 @@ max_iterations = 12          # max model<->tool iterations per turn before stopp
 # (the latter two need an API key, set in the app's Settings or secret store).
 web_search_provider = "duckduckgo"
 
-# Commands auto-allowed without an approval prompt (prefix match).
+# Commands auto-allowed without an approval prompt, matched as an argv prefix. A bare
+# interpreter, package manager, or exec wrapper is not safe because its arguments choose
+# what code runs; use operation-specific entries such as "npm test" instead.
 allowed_commands = [
-  "ls", "cat", "pwd", "grep", "find",
+  "ls", "pwd", "grep", "find",
   "git status", "git diff", "git log",
-  "python3", "pytest", "node", "npm",
+  "pytest",
 ]
 
 # In "custom" permission mode, these tools are auto-approved (everything else still

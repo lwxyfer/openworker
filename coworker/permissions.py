@@ -12,7 +12,7 @@ import re
 import shlex
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, Optional
 
 # Shell metacharacters that turn one "allowlisted" command into several. Any of these in a
@@ -42,6 +42,65 @@ def _looks_like_path(token: str) -> bool:
         or "\\" in token
         or bool(_WIN_DRIVE.match(token))
     )
+
+
+# Programs whose arguments choose code to execute or fetch. A bare allowlist entry
+# therefore authorizes only the zero-argument invocation; an operation-specific entry
+# (for example ``npm test``) remains usable.
+_RUNNER_ANY_ARG = frozenset(
+    {
+        "python", "python3", "node", "deno", "bun", "ruby", "perl", "php", "rscript",
+        "awk", "gawk", "sed", "osascript",
+        "npm", "npx", "pnpm", "yarn", "pip", "pip3", "uv", "uvx", "pipx",
+        "cargo", "go", "gem", "bundle", "gradle", "mvn",
+        "sh", "bash", "zsh", "dash", "fish", "env", "sudo", "doas",
+        "nohup", "timeout", "watch", "nice", "xargs",
+        "ssh", "scp", "docker", "podman", "kubectl",
+    }
+)
+
+_RUNNER_ESCAPES: dict[str, frozenset[str]] = {
+    "find": frozenset({"-exec", "-execdir", "-ok", "-okdir"}),
+    "git": frozenset({"-c", "--exec-path", "--upload-pack", "--receive-pack"}),
+    "tar": frozenset({"--checkpoint-action", "--to-command", "--use-compress-program"}),
+    "rsync": frozenset({"-e", "--rsh", "--rsync-path"}),
+    "vim": frozenset({"-c", "--cmd"}),
+    "vi": frozenset({"-c", "--cmd"}),
+    "nvim": frozenset({"-c", "--cmd"}),
+}
+
+_EXE_SUFFIXES = (".exe", ".cmd", ".bat", ".com", ".ps1")
+
+
+def _program_name(argv0: str) -> str:
+    """Normalize Unix/Windows spellings to a lower-case executable name."""
+    name = PurePath(argv0.replace("\\", "/")).name.lower()
+    for suffix in _EXE_SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def _flag_name(token: str) -> str:
+    return token.split("=", 1)[0]
+
+
+def _delegates_execution(argv: list[str], prefix: list[str]) -> bool:
+    """Return True when arguments after an allowlist prefix delegate execution."""
+    program = _program_name(argv[0])
+    extra = argv[len(prefix) :]
+    if not extra:
+        return False
+    if program in _RUNNER_ANY_ARG and len(prefix) == 1:
+        return True
+    escapes = _RUNNER_ESCAPES.get(program)
+    if escapes:
+        named = {_flag_name(token) for token in prefix}
+        for token in extra:
+            flag = _flag_name(token)
+            if flag in escapes and flag not in named:
+                return True
+    return False
 
 from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOOLS)
     SHELL_TOOL,
@@ -316,5 +375,7 @@ class PermissionEngine:
             except ValueError:
                 continue
             if prefix and argv[: len(prefix)] == prefix:
+                if _delegates_execution(argv, prefix):
+                    continue
                 return True
         return False
