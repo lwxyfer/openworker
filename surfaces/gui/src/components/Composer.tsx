@@ -54,6 +54,7 @@ interface Props {
   // interactive-then-disabled control.
   running: boolean;
   connected: boolean;
+  questionPending?: boolean;
   // False when the default model's provider has no key — the composer shows a "connect a model"
   // banner and routes sends to setup (preserving the draft) instead of dropping them.
   modelReady?: boolean;
@@ -234,19 +235,26 @@ export function Composer(props: Props) {
   }, [dictation?.recording]);
 
   useEffect(() => {
-    if (!dictation?.recording) return;
-    const cancelOnEscape = (event: KeyboardEvent) => {
+    const onEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (event.defaultPrevented || event.repeat) return;
+      if (document.querySelector('[role="dialog"], [role="menu"], [role="listbox"]')) return;
+      if (!dictation?.recording && props.questionPending) return;
+      if (!dictation?.recording && !props.running) return;
       event.preventDefault();
-      void cancelDictation()
-        .catch(() => undefined)
-        .finally(() => {
-          void getDictationStatus().then((status) => status && setDictation(status));
-        });
+      if (dictation?.recording) {
+        void cancelDictation()
+          .catch(() => undefined)
+          .finally(() => {
+            void getDictationStatus().then((status) => status && setDictation(status));
+          });
+      } else {
+        props.onInterrupt();
+      }
     };
-    window.addEventListener("keydown", cancelOnEscape);
-    return () => window.removeEventListener("keydown", cancelOnEscape);
-  }, [dictation?.recording]);
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [dictation?.recording, props.questionPending, props.running, props.onInterrupt]);
 
   const voiceReady = !!dictation?.supported && !!dictation?.model_verified && !!dictation?.test_passed;
   const recordingTime = `${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`;
@@ -652,7 +660,7 @@ export function Composer(props: Props) {
 
           {/* send / stop */}
           {props.running ? (
-            <button className="btn danger shrink-0" onClick={props.onInterrupt}>
+            <button className="btn danger shrink-0" onClick={props.onInterrupt} title="Stop (Esc)">
               ⏹ Stop
             </button>
           ) : (

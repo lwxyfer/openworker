@@ -1661,6 +1661,7 @@ export function App() {
               modelLabels={modelLabels}
               running={running}
               connected={connected}
+              questionPending={!!pendingQuestion || sessionInbox[0]?.kind === "question"}
               modelReady={readyModels === null ? modelReady : readyModels.includes(model)}
               onConnectModel={openModelSetup}
               onConfigureVoiceInput={() => openSettings("voice")}
