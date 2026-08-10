@@ -125,6 +125,17 @@ def _ensure_ca_bundle() -> None:
         pass
 
 
+def _use_system_trust_store() -> None:
+    """Use the OS trust store when available (important for corporate TLS interception)."""
+    try:
+        import truststore
+
+        truststore.inject_into_ssl()
+    except Exception:
+        # certifi/SSL_CERT_FILE remains the portable fallback on systems without truststore.
+        pass
+
+
 def _ensure_api_token(port: int) -> Path | None:
     """Set launch auth; standalone/dev tokens use a user-only, port-specific file."""
     if os.environ.get("COWORKER_API_TOKEN"):
@@ -138,6 +149,7 @@ def _ensure_api_token(port: int) -> Path | None:
 
 def main(argv=None) -> None:
     _ensure_ca_bundle()
+    _use_system_trust_store()
     cfg = load_config()  # global config supplies defaults
     parser = argparse.ArgumentParser(prog="openworker-server")
     parser.add_argument("--cwd", default=None, help="optional seed/default workspace")

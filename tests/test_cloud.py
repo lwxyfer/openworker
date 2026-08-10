@@ -112,6 +112,18 @@ def test_complete_login_rejects_unknown_state(secrets, config):
     assert not cloud.complete_login(secrets, config, "code", "forged-state")["ok"]
 
 
+def test_complete_login_reports_transport_error(secrets, config, monkeypatch):
+    state = cloud.begin_login(config)["state"]
+
+    def fail(*args, **kwargs):
+        raise cloud.httpx.ConnectError("certificate verify failed")
+
+    monkeypatch.setattr(cloud.httpx, "post", fail)
+    result = cloud.complete_login(secrets, config, "code", state)
+    assert result["ok"] is False
+    assert "certificate verify failed" in result["error"]
+
+
 # --- restore-on-sign-in: GET /v1/connections → local github install profiles -----
 
 
