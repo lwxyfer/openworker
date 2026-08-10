@@ -103,7 +103,7 @@ Tests: `make test` (or `.venv/bin/pytest`), `make test-gui` (`npm test`), and `m
 | `surfaces/gui/` | Desktop app - React UI + Tauri shell that supervises the server |
 | `stt/` | Speech-to-text sidecar (Rust) for voice input |
 | `packaging/` | Installer builds (macOS DMG, Windows), auto-update manifest, dev bootstrap |
-| `docs/` | Design specs and decision logs |
+| `docs/` | Design specs, decision logs, and [connector setup guide](docs/connectors.md) |
 | `tests/` | Backend test suite |
 
 ## Built on aisuite
