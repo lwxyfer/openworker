@@ -456,6 +456,33 @@ _PARAM_BLOCK = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# A function call that starts but never closes, commonly caused by a local model
+# running out of output tokens mid-tool call.
+_FUNCTION_OPEN_TRUNCATED = re.compile(
+    r"<function\s*=\s*(?P<name>[^>\s]+)\s*>(?P<body>(?:(?!</function\s*>).)*)$",
+    re.IGNORECASE | re.DOTALL,
+)
+_LEAKED_TOOL_SYNTAX = (
+    "<tool_call>",
+    "</tool_call>",
+    "<function=",
+    "</function>",
+    "<parameter=",
+    "</parameter>",
+    "<function_calls>",
+    "<invoke ",
+)
+_FENCED = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
+
+
+def looks_like_unparsed_tool_call(
+    text: Optional[str], tools: Optional[list[dict[str, Any]]] = None
+) -> bool:
+    """Detect leaked tool markup after salvage failed, excluding fenced explanations."""
+    if not tools or not text:
+        return False
+    return any(marker in _FENCED.sub("", text).lower() for marker in _LEAKED_TOOL_SYNTAX)
+
 
 def _coerce_param(raw: str) -> Any:
     """Keep free-text verbatim (the common case: file content), but recover real JSON values when
@@ -627,6 +654,19 @@ def _salvage_tool_calls_from_text(
         calls.append(ToolCall(id="", name=name, arguments=args))
     if calls:
         return _renumber(calls)
+
+    # 1c) Truncated XML call: keep only complete parameter blocks. A partial final
+    # parameter is intentionally dropped rather than guessed, so incomplete paths or
+    # file contents never reach a tool.
+    tm = _FUNCTION_OPEN_TRUNCATED.search(text)
+    if tm:
+        name = tm.group("name").strip()
+        if names is None or name in names:
+            args = {
+                pm.group("key").strip(): _coerce_param(pm.group("val"))
+                for pm in _PARAM_BLOCK.finditer(tm.group("body"))
+            }
+            return _renumber([ToolCall(id="", name=name, arguments=args)])
 
     # 2) Embedded {"name": …, "arguments": …} objects, even surrounded by prose.
     for sub in _iter_top_objects(text):

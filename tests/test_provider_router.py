@@ -15,7 +15,10 @@ from coworker.providers import (
     capabilities_for,
 )
 from coworker.providers.registry import _normalize_local_url, build_provider_client
-from coworker.providers.openai_provider import _salvage_tool_calls_from_text
+from coworker.providers.openai_provider import (
+    _salvage_tool_calls_from_text,
+    looks_like_unparsed_tool_call,
+)
 
 
 # -- base_url passthrough -------------------------------------------------------
@@ -298,6 +301,31 @@ def test_salvage_filters_unknown_tool_name():
     # A {name,arguments} object whose name isn't an offered tool must NOT be salvaged.
     text = '{"name": "rm_rf", "arguments": {"path": "/"}}'
     assert _salvage_tool_calls_from_text(text, _TODO_TOOLS) == []
+
+
+def test_salvage_truncated_xml_keeps_only_complete_parameters():
+    tools = _TODO_TOOLS + [
+        {
+            "type": "function",
+            "function": {
+                "name": "grep",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"pattern": {"type": "string"}, "path": {"type": "string"}},
+                },
+            },
+        }
+    ]
+    text = "<tool_call>\n<function=grep>\n<parameter=pattern>TODO</parameter>\n<parameter=path>sr"
+    calls = _salvage_tool_calls_from_text(text, tools)
+    assert len(calls) == 1 and calls[0].name == "grep"
+    assert calls[0].arguments == {"pattern": "TODO"}
+
+
+def test_unparsed_tool_detector_ignores_fenced_explanations():
+    assert looks_like_unparsed_tool_call("</parameter>", _TODO_TOOLS)
+    assert not looks_like_unparsed_tool_call("```<tool_call><function=x>```", _TODO_TOOLS)
+    assert not looks_like_unparsed_tool_call("<tool_call>", None)
 
 
 def test_salvage_nested_braces_in_tag():

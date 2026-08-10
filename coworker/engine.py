@@ -24,6 +24,7 @@ from .events import Event, EventType
 from .permissions import Mode, PermissionEngine
 from .providers import AssistantTurn, ProviderClient, ToolCall
 from .providers.errors import friendly_model_error
+from .providers.openai_provider import looks_like_unparsed_tool_call
 from .tools import ToolRegistry
 
 
@@ -415,6 +416,18 @@ class TurnEngine:
                 if self._steering:
                     self._inject_steering()
                     continue
+                if looks_like_unparsed_tool_call(turn.text, self.registry.schemas() or None):
+                    message = (
+                        f"{self.model} replied with a tool call this endpoint couldn't parse, "
+                        "so the turn was stopped rather than answered from a partial call. "
+                        "Retry, or switch to a larger model."
+                    )
+                    self._append_notice("error", message)
+                    yield Event(
+                        EventType.ERROR,
+                        {"error": message, "error_type": "UnparsedToolCall"},
+                    )
+                    return
                 yield Event(
                     EventType.TURN_END,
                     {"status": "completed", "iterations": iterations},

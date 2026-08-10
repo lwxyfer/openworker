@@ -89,6 +89,23 @@ def test_no_tool_turn(tmp_path):
     assert events[-1].data["status"] == "completed"
 
 
+def test_leaked_tool_markup_ends_as_retriable_error(tmp_path):
+    engine, _ = _engine(tmp_path, [_text_turn("Let me inspect files.\n<tool_call><function=unknown")])
+    events = _collect(engine, "inspect the project")
+    assert EventType.ERROR in _types(events)
+    assert EventType.TURN_END not in _types(events)
+    err = next(ev for ev in events if ev.type == EventType.ERROR)
+    assert err.data["error_type"] == "UnparsedToolCall"
+    assert engine._tail_is_retriable_error()
+
+
+def test_fenced_tool_markup_is_still_a_normal_answer(tmp_path):
+    engine, _ = _engine(tmp_path, [_text_turn("Example syntax:\n```<tool_call><function=x>```")])
+    events = _collect(engine, "explain tool syntax")
+    assert EventType.ERROR not in _types(events)
+    assert EventType.TURN_END in _types(events)
+
+
 def test_tool_turn_order_and_execution(tmp_path):
     (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
     engine, _ = _engine(
