@@ -12,6 +12,9 @@ the same rule for the browser tools.
 """
 
 from pathlib import Path
+import tempfile as tempfile_mod
+import re
+import stat
 
 import pytest
 
@@ -132,3 +135,23 @@ def test_tools_are_constructible_without_roots(session):
     """CLI/direct callers pass no roots; construction must still work (and deny)."""
     upload = _tools(None)["browser_upload_file"]
     assert "error" in upload("input", str(session["outside"] / "id_rsa"))
+
+
+def test_default_screenshot_path_is_unpredictable_and_private(tmp_path, monkeypatch):
+    shared = tmp_path / "shared_tmp"
+    scratch = tmp_path / "scratch"
+    shared.mkdir()
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile_mod, "gettempdir", lambda: str(shared))
+
+    shot = _tools([RootDir(path=scratch, writable=True)])["browser_screenshot"]
+    shot()
+    shot()
+
+    created = sorted(shared.iterdir())
+    assert len(created) == 2
+    assert created[0].name != created[1].name
+    for file in created:
+        assert re.match(r"coworker-browser-screenshot\..+\.png$", file.name)
+        mode = stat.S_IMODE(file.stat().st_mode)
+        assert mode & (stat.S_IRGRP | stat.S_IROTH) == 0

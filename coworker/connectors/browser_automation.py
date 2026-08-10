@@ -7,6 +7,7 @@ tools return a clear setup error instead of breaking engine construction.
 from __future__ import annotations
 
 import re
+import os
 import tempfile
 import threading
 import time
@@ -568,7 +569,11 @@ def make_browser_automation_tools(
             if err:
                 return err
         else:
-            out = (Path(tempfile.gettempdir()) / "coworker-browser-screenshot.png").resolve()
+            fd, name = tempfile.mkstemp(
+                prefix="coworker-browser-screenshot.", suffix=".png"
+            )
+            os.close(fd)
+            out = Path(name).resolve()
 
         def run(page):
             out.parent.mkdir(parents=True, exist_ok=True)
