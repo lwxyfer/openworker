@@ -208,7 +208,11 @@ def test_ollama_models_gated_on_liveness(tmp_path, monkeypatch):
     assert "ollama:llama3.3" not in manager.get_settings()["models"]
 
     monkeypatch.setattr(SessionManager, "_local_alive", lambda self, name: True)
-    assert "ollama:llama3.3" in manager.get_settings()["models"]
+    settings = manager.get_settings()
+    assert "ollama:llama3.3" in settings["models"]
+    assert settings["model_ready"] is False
+    assert "gpt-5.6-sol" not in settings["ready_models"]
+    assert "ollama:llama3.3" in settings["ready_models"]
 
 
 def test_lmstudio_models_gated_on_liveness(tmp_path, monkeypatch):
