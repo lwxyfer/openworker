@@ -388,6 +388,19 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         assert caps.tools and caps.parallel_tool_calls and caps.streaming
 
 
+def test_openrouter_vision_matches_declared_input_modalities():
+    """Vision must track what OpenRouter declares per model, or the engine swaps in its
+    non-vision placeholder and the image never reaches a model that can read it."""
+    for mid in (
+        "openrouter:moonshotai/kimi-k2.6",
+        "openrouter:meta-llama/llama-4-maverick",
+    ):
+        caps = capabilities_for(mid)
+        assert caps.vision and not caps.pdf, mid
+    for mid in ("openrouter:z-ai/glm-5.2", "openrouter:deepseek/deepseek-v4-pro"):
+        assert not capabilities_for(mid).vision, mid
+
+
 def test_qwen38_max_preview_is_curated_vision_true():
     """Qwen3.8 Max Preview is multimodal, unlike the text-only Qwen3 Max — it needs its
     own matrix entry so the blanket qwen-prefix heuristic (vision=False) doesn't strip
