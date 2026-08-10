@@ -17,7 +17,28 @@ from typing import Any, Callable, Optional
 
 import aisuite as ai
 
+from ..roots import RootDir
 from ..web.guard import check_url
+
+
+def _resolve_in_roots(
+    path: str, roots: Optional[list[RootDir]], *, need_write: bool
+) -> tuple[Optional[Path], Optional[dict[str, Any]]]:
+    """Resolve a browser filesystem path inside a granted session root."""
+    candidates = [r for r in (roots or []) if r.writable or not need_write]
+    if not candidates:
+        return None, {
+            "error": (
+                "no writable session directory is available"
+                if need_write
+                else "this session has no granted directories"
+            )
+        }
+    resolved = Path(str(path)).expanduser().resolve()
+    if not any(resolved.is_relative_to(r.path) for r in candidates):
+        verb = "writable " if need_write else ""
+        return None, {"error": f"{path} is outside the session's {verb}directories"}
+    return resolved, None
 
 
 def _meta(
@@ -326,7 +347,9 @@ def _snapshot(page, max_chars: int) -> dict[str, Any]:
     }
 
 
-def make_browser_automation_tools() -> list[Callable[..., Any]]:
+def make_browser_automation_tools(
+    roots: Optional[list[RootDir]] = None,
+) -> list[Callable[..., Any]]:
     tools: list[Callable[..., Any]] = []
 
     def browser_open_url(
@@ -484,9 +507,11 @@ def make_browser_automation_tools() -> list[Callable[..., Any]]:
     )
 
     def browser_upload_file(target: str, path: str) -> dict[str, Any]:
-        file_path = Path(path).expanduser().resolve()
+        file_path, err = _resolve_in_roots(path, roots, need_write=False)
+        if err:
+            return err
         if not file_path.exists():
-            return {"error": f"file not found: {file_path}"}
+            return {"error": f"file not found: {path}"}
         return _BROWSER.call(
             "upload_file",
             lambda page: (
@@ -538,13 +563,14 @@ def make_browser_automation_tools() -> list[Callable[..., Any]]:
     )
 
     def browser_screenshot(path: str = "") -> dict[str, Any]:
+        if path:
+            out, err = _resolve_in_roots(path, roots, need_write=True)
+            if err:
+                return err
+        else:
+            out = (Path(tempfile.gettempdir()) / "coworker-browser-screenshot.png").resolve()
+
         def run(page):
-            out = (
-                Path(path).expanduser()
-                if path
-                else Path(tempfile.gettempdir()) / "coworker-browser-screenshot.png"
-            )
-            out = out.resolve()
             out.parent.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(out), full_page=True)
             return {"ok": True, "path": str(out), "url": page.url}
