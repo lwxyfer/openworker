@@ -11,7 +11,8 @@ model = "gpt-5.5"            # default model id (override per session in the UI/
 mode = "interactive"         # plan | interactive | auto | custom
 max_iterations = 12          # max model<->tool iterations per turn before stopping
 
-# Web search backend: "duckduckgo" (keyless, default) | "tavily" | "brave"
+# Web search backend: "duckduckgo" (keyless, default) | "you" | "tavily" | "brave" |
+# "serpdive" | "firecrawl" | "linkup" | "exa" | "serper"
 # (the latter two need an API key, set in the app's Settings or secret store).
 web_search_provider = "duckduckgo"
 

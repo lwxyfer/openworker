@@ -18,9 +18,14 @@ from coworker.web import (
 from coworker.web.providers import (
     BraveProvider,
     DuckDuckGoProvider,
+    ExaProvider,
+    FirecrawlProvider,
+    LinkupProvider,
+    SerperProvider,
     SerpdiveProvider,
     TavilyProvider,
     WebSearchProvider,
+    YouProvider,
 )
 
 
@@ -83,6 +88,12 @@ def test_build_provider_third_party_requires_key():
     assert isinstance(build_provider("tavily", "tvly-x"), TavilyProvider)
     assert isinstance(build_provider("brave", "brv-x"), BraveProvider)
     assert isinstance(build_provider("serpdive", "sd_live_x"), SerpdiveProvider)
+    assert isinstance(build_provider("firecrawl", "fc-x"), FirecrawlProvider)
+    assert isinstance(build_provider("linkup", "lu-x"), LinkupProvider)
+    assert isinstance(build_provider("exa", "exa-x"), ExaProvider)
+    assert isinstance(build_provider("serper", "sp-x"), SerperProvider)
+    assert isinstance(build_provider("you"), YouProvider)
+    assert all(name in provider_names() for name in ("you", "firecrawl", "linkup", "exa", "serper"))
     assert "serpdive" in provider_names()
 
 
