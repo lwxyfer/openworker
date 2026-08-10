@@ -10,6 +10,9 @@ import {
   disallowUser,
   getMcpServers,
   getMcpTools,
+  type McpToolRow,
+  setRiskOverride,
+  deleteRiskOverride,
   signoutMcp,
   getSettings,
   getSubscriptions,
@@ -383,7 +386,7 @@ function McpRow({
   onRemove: () => void;
   onRefresh: () => void;
 }) {
-  const [tools, setTools] = useState<{ name: string; description: string }[] | null>(null);
+  const [tools, setTools] = useState<McpToolRow[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [toolErr, setToolErr] = useState<string | null>(null);
 
@@ -456,17 +459,41 @@ function McpRow({
       )}
       {toolErr && <div className="text-[12.5px] text-danger mt-1.5">{toolErr}</div>}
       {tools && (
-        <div className="mt-2.5 pt-2.5 border-t border-line flex flex-wrap gap-1.5">
+        <div className="mt-2.5 pt-2.5 border-t border-line">
           {tools.length === 0 && <div className="text-[12px] text-faint">No tools.</div>}
-          {tools.map((t) => (
-            <span
-              key={t.name}
-              title={t.description}
-              className="font-mono text-[11.5px] px-1.5 py-0.5 rounded-md bg-paper border border-line"
-            >
-              {t.name}
-            </span>
-          ))}
+          {tools.length > 0 && (
+            <div className="text-[11.5px] text-faint mb-1.5">
+              Click a tool to trust it as read-only; click again to restore approval.
+            </div>
+          )}
+          <div className="flex flex-wrap gap-1.5">
+            {tools.map((t) => {
+              const relaxed = t.overridden && t.risk === "read";
+              const asks = t.risk !== "read";
+              return (
+                <button
+                  key={t.name}
+                  data-testid={`mcp-tool-risk-${t.name}`}
+                  title={t.description}
+                  onClick={async () => {
+                    if (t.overridden) await deleteRiskOverride(t.full_name);
+                    else await setRiskOverride(t.full_name, "read");
+                    const res = await getMcpTools(server.name);
+                    if (res.ok) setTools(res.tools);
+                  }}
+                  className={
+                    "font-mono text-[11.5px] px-1.5 py-0.5 rounded-md bg-paper border " +
+                    (relaxed ? "border-ink/60 text-ink" : "border-line text-muted hover:text-ink")
+                  }
+                >
+                  {t.name}
+                  <span className={"ml-1.5 " + (relaxed ? "text-ink" : "text-faint")}>
+                    {relaxed ? "auto" : asks ? "asks" : "read"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

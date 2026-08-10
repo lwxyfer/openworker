@@ -777,6 +777,18 @@ def create_app(manager: SessionManager) -> FastAPI:
     async def mcp_tools(name: str) -> dict[str, Any]:
         return await manager.mcp_tools(name)
 
+    @app.get("/v1/risk-overrides")
+    def risk_overrides_list() -> dict[str, Any]:
+        return manager.list_risk_overrides()
+
+    @app.post("/v1/risk-overrides")
+    def risk_overrides_set(body: dict) -> dict[str, Any]:
+        return manager.set_risk_override(body or {})
+
+    @app.delete("/v1/risk-overrides")
+    def risk_overrides_delete(pattern: str) -> dict[str, Any]:
+        return manager.delete_risk_override(pattern)
+
     @app.post("/v1/mcp/{name}/connect")
     async def mcp_connect(name: str) -> dict[str, Any]:
         # Connect now. For `auth: oauth` servers the first connect opens the system

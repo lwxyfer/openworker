@@ -34,9 +34,24 @@ def _specificity(pattern: str) -> int:
 
 
 class RiskOverrideStore:
+    """User-local rules with lazy mtime reload so live engines see REST updates."""
+
     def __init__(self, path: Optional[str | Path] = None) -> None:
         self.path = Path(path) if path else None
-        self._rules: list[_Rule] = self._load()
+        self._mtime: Optional[int] = None
+        self._rules: list[_Rule] = []
+        self._refresh()
+
+    def _refresh(self) -> None:
+        if not self.path:
+            return
+        try:
+            mtime = self.path.stat().st_mtime_ns
+        except OSError:
+            self._rules, self._mtime = [], None
+            return
+        if mtime != self._mtime:
+            self._rules, self._mtime = self._load(), mtime
 
     def _load(self) -> list[_Rule]:
         data = read_json(self.path, {}) or {}
@@ -53,15 +68,34 @@ class RiskOverrideStore:
             self.path,
             {"rules": [{"pattern": r.pattern, "risk": r.risk.value} for r in self._rules]},
         )
+        try:
+            self._mtime = self.path.stat().st_mtime_ns if self.path else None
+        except OSError:
+            self._mtime = None
 
     def set_rule(self, pattern: str, risk: RiskClass | str) -> None:
         """Add/replace a user override (the everyday path writes this from the approval UI)."""
         risk = RiskClass(risk) if not isinstance(risk, RiskClass) else risk
+        self._refresh()
         self._rules = [r for r in self._rules if r.pattern != pattern]
         self._rules.append(_Rule(pattern, risk))
         self.save()
 
+    def remove_rule(self, pattern: str) -> bool:
+        self._refresh()
+        before = len(self._rules)
+        self._rules = [r for r in self._rules if r.pattern != pattern]
+        if len(self._rules) == before:
+            return False
+        self.save()
+        return True
+
+    def rules(self) -> list[dict[str, str]]:
+        self._refresh()
+        return [{"pattern": r.pattern, "risk": r.risk.value} for r in self._rules]
+
     def resolve(self, tool_name: str) -> Optional[RiskClass]:
+        self._refresh()
         best: Optional[RiskClass] = None
         best_score = -1
         for r in self._rules:

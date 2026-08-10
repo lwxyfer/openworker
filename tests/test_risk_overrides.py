@@ -66,3 +66,22 @@ def test_persona_manifest_cannot_carry_an_override(tmp_path):
     # The override store the engine reads is untouched by loading a persona.
     store = RiskOverrideStore(tmp_path / "ro.json")
     assert store.resolve("anything") is None
+
+
+def test_override_store_lists_and_removes_rules(tmp_path):
+    store = RiskOverrideStore(tmp_path / "ro.json")
+    store.set_rule("mcp__a__*", "read")
+    store.set_rule("mcp__b__*", "external")
+    assert {r["pattern"] for r in store.rules()} == {"mcp__a__*", "mcp__b__*"}
+    assert store.remove_rule("mcp__a__*") is True
+    assert store.remove_rule("mcp__a__*") is False
+    assert store.resolve("mcp__a__get") is None
+
+
+def test_second_store_sees_external_write(tmp_path):
+    path = tmp_path / "ro.json"
+    writer = RiskOverrideStore(path)
+    reader = RiskOverrideStore(path)
+    assert reader.resolve("mcp__x__get") is None
+    writer.set_rule("mcp__x__*", "read")
+    assert reader.resolve("mcp__x__get") == RiskClass.READ

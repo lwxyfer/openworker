@@ -306,10 +306,36 @@ export async function deleteMcpServer(name: string) {
   return res.json();
 }
 
+export interface McpToolRow {
+  name: string;
+  description: string;
+  full_name: string;
+  risk: string;
+  default_risk: string;
+  overridden: boolean;
+}
+
 export async function getMcpTools(
   name: string,
-): Promise<{ ok: boolean; error?: string; tools: { name: string; description: string }[] }> {
+): Promise<{ ok: boolean; error?: string; tools: McpToolRow[] }> {
   const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}/tools`);
+  return res.json();
+}
+
+export async function setRiskOverride(pattern: string, risk: string) {
+  const res = await fetch(`${httpBase()}/v1/risk-overrides`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pattern, risk }),
+  });
+  return res.json();
+}
+
+export async function deleteRiskOverride(pattern: string) {
+  const res = await fetch(
+    `${httpBase()}/v1/risk-overrides?pattern=${encodeURIComponent(pattern)}`,
+    { method: "DELETE" },
+  );
   return res.json();
 }
 
