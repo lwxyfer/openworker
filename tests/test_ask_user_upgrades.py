@@ -155,17 +155,17 @@ def test_buttons_use_rich_option_labels(tmp_path):
         options=["staging", {"label": "prod", "description": "the real one"}],
     )
     btns = buttons_for(item)
-    assert [b.label for b in btns] == ["staging", "prod"]
+    assert [b.label for b in btns] == ["staging", "prod", "Cancel"]
     assert decode(btns[1].value) == (item.id, "prod")  # resolution IS the label
 
 
-def test_grouped_questions_get_no_buttons(tmp_path):
+def test_grouped_questions_get_cancel_button(tmp_path):
     store = InboxStore(tmp_path / "inbox.json")
     fields = question_item_fields(
         {"questions": [{"question": "A?", "options": ["x"]}, {"question": "B?"}]}
     )
     item = store.add_question("s1", **fields)
-    assert buttons_for(item) == []  # one button row can't answer 2+ questions
+    assert [b.label for b in buttons_for(item)] == ["Cancel"]
 
 
 # -- full stack: grouped call → Inbox item → JSON resolution → {answers} ------

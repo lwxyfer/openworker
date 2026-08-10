@@ -401,6 +401,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         ],
         build=_build_bedrock,
         recommended_model="claude/anthropic.claude-sonnet-4-6-v1:0",
+        env_key="BEDROCK_API_KEY",
         blurb="Runs models inside your own AWS account. Claude uses Anthropic's native "
         "Bedrock path; every other model goes through the Converse API.",
     ),
@@ -472,6 +473,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         ],
         build=_build_vertex,
         recommended_model="gemini/gemini-3.6-flash",
+        env_key="VERTEX_API_KEY",
         blurb="Runs models inside your own Google Cloud project. Gemini and Claude use "
         "their native APIs; open-weight models go through the Vertex MaaS endpoint.",
     ),

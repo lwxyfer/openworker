@@ -128,6 +128,9 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     # -- resellers (their model namespaces, verbatim) -----------------------------
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
+    "lmstudio:qwen/qwen3-coder-30b": ModelEntry(
+        "Qwen3 Coder 30B · LM Studio", _AGENTIC
+    ),
     "together:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Together", _AGENTIC, 128_000),
     # Kimi K3 on Together (landed late July 2026): 1M window, native vision; PDFs
     # unverified over the compat surface (falls back via pdf_support.py, like Muse Spark).
