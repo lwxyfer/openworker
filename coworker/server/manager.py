@@ -1889,8 +1889,9 @@ class SessionManager:
         def _selectable(m: str) -> bool:
             return self._provider_available(self._model_provider(m))
 
-        selectable = [m for m in self._curated_models() if _selectable(m)]
-        if self.model not in selectable:
+        ready_models = [m for m in self._curated_models() if _selectable(m)]
+        selectable = list(ready_models)
+        if self.model not in ready_models:
             selectable.insert(0, self.model)
         from ..providers.matrix import model_labels
 
@@ -1898,6 +1899,9 @@ class SessionManager:
             "provider": "openai",
             "model": self.model,
             "models": selectable,
+            # `models` keeps the active default visible even when unavailable; consumers that
+            # need to decide whether a session-selected model can run must use this set.
+            "ready_models": ready_models,
             # Curated-matrix display names ({full id → "GLM-5.2 · via Together"}) so every
             # picker shows human labels; custom models absent here render their raw id.
             "model_labels": model_labels(),

@@ -227,6 +227,7 @@ export function App() {
   // composer's "No model connected" chip. Default true so we don't flash the chip before settings
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
+  const [readyModels, setReadyModels] = useState<string[] | null>(null);
   const [surface, setSurface] = useState<
     "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings"
   >("session");
@@ -516,6 +517,7 @@ export function App() {
         setModelContextWindows(s.model_context_windows || {});
         setContextBar(s.context_bar === true);
         setModelReady(s.model_ready);
+        setReadyModels(s.ready_models || null);
         if (s.surfaces) setSurfaces(s.surfaces);
       })
       .catch(() => {});
@@ -1648,7 +1650,7 @@ export function App() {
               modelLabels={modelLabels}
               running={running}
               connected={connected}
-              modelReady={modelReady}
+              modelReady={readyModels === null ? modelReady : readyModels.includes(model)}
               onConnectModel={openModelSetup}
               onConfigureVoiceInput={() => openSettings("voice")}
               onSend={send}
