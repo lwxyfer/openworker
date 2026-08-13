@@ -101,6 +101,9 @@ def test_plan_approval_flips_mode_and_executes(tmp_path):
     events = _collect(engine, "fix the bug")
     types = [e.type for e in events]
     assert EventType.PLAN_PROPOSED in types
+    proposed = next(e for e in events if e.type == EventType.PLAN_PROPOSED)
+    assert proposed.data["call_id"] == "call_1"
+    assert proposed.data["iteration"] == 1
     assert seen_plans == ["1. write x.py  2. verify"]
     # same session flipped to auto and executed the write with no approval prompt
     assert permissions.mode is Mode.AUTO

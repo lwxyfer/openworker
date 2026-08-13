@@ -49,6 +49,7 @@
   --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   /* The right rail's width while reading an artifact (wider than the 332px inspector). */
   --artifact-rail-w: min(62vw, 960px);
+  --agent-flow-rail-w: clamp(440px, 42vw, 620px);
 }
 
 /* Dark palette. `data-theme` is set on <html> by an inline script in index.html (pre-paint)
@@ -251,6 +252,8 @@ body {
   border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer;
 }
 .topbar-icon-btn:hover { color: var(--ink); background: var(--paper); }
+.topbar-icon-btn.active,
+.topbar-icon-btn[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
 .app.tauri-overlay .main-title,
 .app.tauri-overlay .main-drag-fill {
   -webkit-app-region: drag;
@@ -545,6 +548,326 @@ button.btn.danger { color: var(--accent); }
   backdrop-filter: blur(12px);
   z-index: 5;
 }
+
+/* ---------- live agent run flow ---------- */
+.agent-flow-rail {
+  --flow-queued: var(--faint);
+  --flow-running: var(--accent);
+  --flow-waiting: var(--warn-ink);
+  --flow-succeeded: var(--ok);
+  --flow-failed: var(--danger);
+  --flow-interrupted: var(--muted);
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  width: var(--agent-flow-rail-w);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--panel) 93%, transparent);
+  border-left: 1px solid var(--line);
+  box-shadow: -12px 0 32px color-mix(in srgb, var(--ink) 4%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.main.flow-rail-open .main-chat,
+.main.rail-open:has(.agent-flow-rail) .main-chat { margin-right: var(--agent-flow-rail-w); }
+.main.flow-rail-open .main-topbar,
+.main.rail-open:has(.agent-flow-rail) .main-topbar { right: var(--agent-flow-rail-w); }
+
+.agent-flow-head {
+  flex: none;
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 14px 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--glass);
+}
+.agent-flow-heading,
+.agent-flow-head-actions,
+.agent-flow-node-topline,
+.agent-flow-node-kind,
+.agent-flow-node-status,
+.agent-flow-summary,
+.agent-flow-legend-item,
+.agent-flow-focus-btn {
+  display: flex;
+  align-items: center;
+}
+.agent-flow-heading { gap: 10px; min-width: 0; }
+.agent-flow-title-icon {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+  border-radius: 9px;
+}
+.agent-flow-heading-copy { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.agent-flow-heading-copy h2 { margin: 0; font-size: 14px; line-height: 1.25; font-weight: 650; }
+.agent-flow-subtitle {
+  display: block;
+  max-width: 230px;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-flow-head-actions { gap: 8px; flex: none; }
+.agent-flow-summary {
+  gap: 6px;
+  min-height: 25px;
+  padding: 3px 8px;
+  color: var(--muted);
+  background: color-mix(in srgb, currentColor 7%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 16%, var(--line));
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 550;
+}
+.agent-flow-icon-btn {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.agent-flow-icon-btn:hover { color: var(--ink); background: var(--paper); }
+.agent-flow-icon-btn:focus-visible,
+.agent-flow-focus-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.agent-flow-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px 8px 16px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 84%, transparent);
+}
+.agent-flow-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 10px; min-width: 0; }
+.agent-flow-legend-item { gap: 5px; color: var(--faint); font-size: 9.5px; line-height: 1.2; white-space: nowrap; }
+.agent-flow-status-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: currentColor; }
+.agent-flow-focus-btn {
+  gap: 5px;
+  flex: none;
+  height: 27px;
+  padding: 0 8px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 550;
+  cursor: pointer;
+}
+.agent-flow-focus-btn:hover:not(:disabled) { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 48%, var(--line)); }
+.agent-flow-focus-btn:disabled { opacity: .45; cursor: default; }
+
+.agent-flow-canvas {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--paper) 70%, var(--panel));
+  isolation: isolate;
+}
+.agent-flow-canvas .react-flow { width: 100%; height: 100%; background: transparent; }
+.agent-flow-canvas .react-flow__pane { cursor: grab; }
+.agent-flow-canvas .react-flow__pane.dragging { cursor: grabbing; }
+.agent-flow-canvas .react-flow__node:focus-visible { outline: none; }
+.agent-flow-canvas .react-flow__node:focus-visible .agent-flow-node { outline: 2px solid var(--accent); outline-offset: 3px; }
+.agent-flow-canvas .react-flow__attribution { display: none; }
+
+.agent-flow-node {
+  position: relative;
+  width: 228px;
+  min-height: 102px;
+  padding: 11px 12px 12px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: 0 5px 18px color-mix(in srgb, var(--ink) 7%, transparent);
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+.agent-flow-node:hover { border-color: color-mix(in srgb, var(--accent) 36%, var(--line-strong)); }
+.agent-flow-node.is-selected { border-color: color-mix(in srgb, var(--accent) 58%, var(--line-strong)); }
+.agent-flow-node.is-current {
+  border-color: var(--flow-running);
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 7px 22px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.agent-flow-node.is-current::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border: 1px solid var(--accent);
+  border-radius: inherit;
+  animation: agent-flow-pulse 1.8s ease-out infinite;
+}
+@keyframes agent-flow-pulse {
+  0% { opacity: .55; transform: scale(1); }
+  70%, 100% { opacity: 0; transform: scale(1.035, 1.07); }
+}
+.agent-flow-node-topline { justify-content: space-between; gap: 10px; }
+.agent-flow-node-kind { gap: 6px; color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: .025em; text-transform: uppercase; }
+.agent-flow-node-icon {
+  width: 21px;
+  height: 21px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 6px;
+}
+.agent-flow-node.kind-tool .agent-flow-node-icon { color: var(--teal-ink); background: var(--teal-soft); }
+.agent-flow-node.kind-gate .agent-flow-node-icon { color: var(--warn-ink); background: var(--warn-soft); }
+.agent-flow-node.kind-final .agent-flow-node-icon { color: var(--ok); background: var(--ok-soft); }
+.agent-flow-node-status { gap: 5px; font-size: 9.5px; white-space: nowrap; }
+.agent-flow-node-label {
+  margin-top: 9px;
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 620;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-flow-node-meta { display: flex; gap: 5px 8px; margin-top: 5px; overflow: hidden; color: var(--faint); font-size: 9.5px; line-height: 1.25; }
+.agent-flow-node-meta span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-flow-node-detail {
+  display: -webkit-box;
+  margin-top: 6px;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.agent-flow-current-tag {
+  position: absolute;
+  right: 10px;
+  bottom: -9px;
+  padding: 2px 6px;
+  color: #fff;
+  background: var(--accent);
+  border: 2px solid var(--panel);
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+.agent-flow-handle {
+  width: 6px !important;
+  height: 6px !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  background: var(--line-strong) !important;
+  border: 1px solid var(--panel) !important;
+  pointer-events: none !important;
+}
+
+.agent-flow-edge .react-flow__edge-path { stroke: var(--line-strong); }
+.agent-flow-edge.status-running .react-flow__edge-path { stroke: var(--flow-running); }
+.agent-flow-edge.status-waiting .react-flow__edge-path { stroke: var(--flow-waiting); }
+.agent-flow-edge.status-succeeded .react-flow__edge-path { stroke: var(--flow-succeeded); }
+.agent-flow-edge.status-failed .react-flow__edge-path { stroke: var(--flow-failed); }
+.agent-flow-edge.status-interrupted .react-flow__edge-path { stroke: var(--flow-interrupted); stroke-dasharray: 4 4; }
+.agent-flow-edge.kind-return .react-flow__edge-path { stroke-dasharray: 4 3; }
+.agent-flow-canvas .react-flow__edge.animated path { animation-duration: .75s; }
+.agent-flow-canvas .react-flow__arrowhead polyline { stroke: var(--line-strong); fill: var(--line-strong); }
+
+.agent-flow-rail .status-idle { color: var(--faint); }
+.agent-flow-rail .status-queued { color: var(--flow-queued); }
+.agent-flow-rail .status-running { color: var(--flow-running); }
+.agent-flow-rail .status-waiting { color: var(--flow-waiting); }
+.agent-flow-rail .status-succeeded { color: var(--flow-succeeded); }
+.agent-flow-rail .status-failed { color: var(--flow-failed); }
+.agent-flow-rail .status-interrupted { color: var(--flow-interrupted); }
+.agent-flow-node.status-failed { border-color: color-mix(in srgb, var(--danger) 55%, var(--line-strong)); }
+.agent-flow-node.status-waiting { border-color: color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong)); }
+
+.agent-flow-controls {
+  overflow: hidden;
+  background: var(--glass-strong) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 9px !important;
+  box-shadow: 0 5px 16px color-mix(in srgb, var(--ink) 8%, transparent) !important;
+}
+.agent-flow-controls button {
+  width: 29px !important;
+  height: 29px !important;
+  color: var(--muted) !important;
+  background: transparent !important;
+  border-bottom-color: var(--line) !important;
+}
+.agent-flow-controls button:hover { color: var(--ink) !important; background: var(--paper) !important; }
+.agent-flow-controls button svg { fill: currentColor !important; }
+
+.agent-flow-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 32px;
+  color: var(--faint);
+  text-align: center;
+  pointer-events: none;
+}
+.agent-flow-empty-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 5px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+  border-radius: 14px;
+}
+.agent-flow-empty strong { color: var(--ink); font-size: 13px; font-weight: 620; }
+.agent-flow-empty > span:last-child { max-width: 250px; font-size: 11.5px; line-height: 1.5; }
+
+@media (max-width: 920px) {
+  :root { --agent-flow-rail-w: min(100%, 520px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-flow-node,
+  .agent-flow-node.is-current::before,
+  .agent-flow-canvas .react-flow__edge.animated path {
+    animation: none !important;
+    transition: none !important;
+  }
+}
 /* An open artifact widens the rail into a reading panel (Codex-style) — the chat stays visible
    and usable beside it; Back returns to the normal-width Progress/Artifacts list. */
 .right-rail.artifact-mode {
@@ -821,7 +1144,15 @@ button.btn.danger { color: var(--accent); }
 
 /* folder gate */
 .gate-overlay { position: fixed; inset: 0; background: var(--scrim); display: grid; place-items: center; z-index: 50; }
-.gate { width: 480px; max-width: 92vw; background: var(--paper); border: 1px solid var(--line-strong); border-radius: 16px; padding: 26px 26px 22px; box-shadow: 0 20px 60px rgba(0,0,0,0.18); }
+.gate { position: relative; width: 480px; max-width: 92vw; background: var(--paper); border: 1px solid var(--line-strong); border-radius: 16px; padding: 26px 26px 22px; box-shadow: 0 20px 60px rgba(0,0,0,0.18); }
+.gate-close {
+  position: absolute; top: 10px; right: 10px; width: 30px; height: 30px;
+  display: grid; place-items: center; border: 0; border-radius: 8px;
+  background: transparent; color: var(--muted); font: inherit; font-size: 21px;
+  line-height: 1; cursor: pointer;
+}
+.gate-close:hover { color: var(--ink); background: var(--panel); }
+.gate-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .gate-mark { color: var(--accent); font-size: 22px; }
 .gate h2 { font-family: var(--serif); font-size: 24px; margin: 6px 0 4px; }
 .gate-sub { color: var(--muted); font-size: 13.5px; margin: 0 0 16px; }

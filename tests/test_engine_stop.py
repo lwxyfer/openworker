@@ -260,6 +260,12 @@ def test_stop_skips_remaining_tool_calls(tmp_path):
 
     events = asyncio.run(run())
     assert events[-1].type == EventType.INTERRUPTED
+    finished = [e for e in events if e.type == EventType.TOOL_FINISHED]
+    assert {e.data["call_id"] for e in finished} == {"c0", "c1"}
+    assert all(e.data["iteration"] == 1 for e in finished)
+    assert next(e for e in finished if e.data["call_id"] == "c1").data[
+        "status"
+    ] == "interrupted"
     results = _tool_results(engine)
     assert len(results) == 2  # both calls answered — no orphans
     assert "interrupted by user" in results[1]["content"]

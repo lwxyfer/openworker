@@ -1,8 +1,11 @@
 # coworker/ -- Python backend
+# 中文说明：coworker/ —— Python 后端
 
 FastAPI server with agent engine, LLM providers, connectors, and tools.
+<!-- 中文翻译：FastAPI 服务器，包含智能体引擎、LLM Provider、连接器和工具。 -->
 
 ## Key directories
+<!-- 中文翻译：主要目录 -->
 
 - `server/` -- FastAPI app, manager, CLI entry point
 - `providers/` -- LLM providers (OpenAI, Anthropic, Gemini, Bedrock, Vertex, Ollama)
@@ -18,6 +21,7 @@ FastAPI server with agent engine, LLM providers, connectors, and tools.
 - `testing/` -- Test utilities (fake Slack server)
 
 ## Conventions
+<!-- 中文翻译：约定 -->
 
 - Type hints required on all public APIs
 - Google-style docstrings: `"""Summary. (blank line) Details."""`
@@ -25,3 +29,4 @@ FastAPI server with agent engine, LLM providers, connectors, and tools.
 - Prefs stored in `prefs.json` via `_prefs` dict in `manager.py`
 - Secrets stored via `SecretStore` (encrypted at rest)
 - New settings follow: `manager.py` getter/setter -> `app.py` route -> `api.ts` frontend API
+<!-- 中文翻译：新设置遵循以下链路：`manager.py` getter/setter -> `app.py` 路由 -> `api.ts` 前端 API。 -->

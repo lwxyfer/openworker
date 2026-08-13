@@ -59,6 +59,7 @@ import { Onboarding } from "./components/Onboarding";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ScheduledView } from "./components/ScheduledView";
 import { RightRail } from "./components/RightRail";
+import { AgentFlowRail } from "./components/AgentFlowRail";
 import { IntegrationsView } from "./components/IntegrationsView";
 import { SettingsView } from "./components/SettingsView";
 import { PersonaView } from "./components/PersonaView";
@@ -68,6 +69,12 @@ import { ApprovalCard } from "./components/ApprovalCard";
 import { DirectoryRequestCard } from "./components/DirectoryRequestCard";
 import { PlanCard } from "./components/PlanCard";
 import { WorkspaceTrustPrompt } from "./components/WorkspaceTrustPrompt";
+import {
+  createFlowState,
+  hydrateFlowFromMessages,
+  reduceFlowEvent,
+} from "./agentFlow/reducer";
+import type { FlowGraphState } from "./agentFlow/types";
 
 const newId = () =>
   (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
@@ -101,11 +108,24 @@ function normalizeTodos(raw: unknown): TodoItem[] {
 // Fallbacks used only before the persona list loads (the in-component, family-aware
 // needsWorkspace/gatesWorkspace consult the real persona once available).
 const needsWorkspaceFallback = (a: string) => a === "code" || a === "cowork";
-const gatesWorkspaceFallback = (a: string) => a === "code";
+const gatesWorkspaceFallback = (a: string) => needsWorkspaceFallback(a);
 const LAST_SESSION_KEY = "coworker:last-session-by-agent:v1";
 const NAV_COLLAPSED_KEY = "coworker:nav-collapsed:v1";
 
 type LastSession = { sessionId: string; workspace: string; updatedAt: number };
+type RightPanel = "inspector" | "agent-flow" | null;
+type ProjectPickerSnapshot = {
+  agent: string;
+  workspace: string | null;
+  branch: string | null;
+  sessionId: string;
+  items: Item[];
+  usage: SessionUsage;
+  streaming: string;
+  todo: TodoItem[];
+  running: boolean;
+  flowGraph: FlowGraphState;
+};
 
 function readLastSessions(): Record<string, LastSession> {
   try {
@@ -203,6 +223,25 @@ export function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+  const activateSession = (nextSessionId: string) => {
+    sessionIdRef.current = nextSessionId;
+    setSessionId(nextSessionId);
+  };
+  // Kept at App scope rather than inside the panel: closing Agent Flow must not stop recording
+  // the current run. History hydration and live events feed the same reducer contract.
+  const [flowGraph, setFlowGraph] = useState<FlowGraphState>(() => createFlowState(sessionId));
+  const resetFlowGraph = (nextSessionId: string) => setFlowGraph(createFlowState(nextSessionId));
+  const hydrateSession = (nextSessionId: string, messages: Awaited<ReturnType<typeof getSessionMessages>>) => {
+    // Session history is fetched asynchronously. If the user switches again before it returns,
+    // discard the stale response instead of letting the old transcript and graph overwrite the
+    // newly selected session.
+    if (sessionIdRef.current !== nextSessionId) return;
+    setItems(itemsFromMessages(messages));
+    setUsage(usageFromMessages(messages));
+    setFlowGraph(hydrateFlowFromMessages(nextSessionId, messages));
+  };
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
   // to, driving the banner + "Back to runs". Best-effort — a run session without context still
   // shows a generic banner (detected by its __run__ id).
@@ -213,6 +252,7 @@ export function App() {
   // "Loading…" forever (owner-hit 2026-07-20). Nav re-entry should land on the list.
   const [scheduledOpenId, setScheduledOpenId] = useState<string | null>(null);
   const [gateCreate, setGateCreate] = useState(false);
+  const projectPickerSnapshot = useRef<ProjectPickerSnapshot | null>(null);
   // Which Settings section the full-page Settings surface opens on (§ Settings-as-page).
   const [settingsTab, setSettingsTab] = useState<
     "appearance" | "models" | "skills" | "voice" | "memory" | "personas"
@@ -249,7 +289,9 @@ export function App() {
     setSurface("persona");
   };
   const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
-  const [railHidden, setRailHidden] = useState(false);
+  // The inspector and the live Agent Flow share one right-side slot. Keeping this as one
+  // discriminated state makes overlap impossible and gives each panel its own topbar button.
+  const [rightPanel, setRightPanel] = useState<RightPanel>("inspector");
   // Left-nav collapse (⌘B): when collapsed the sidebar leaves the grid so content reclaims the
   // width; hovering the left edge peeks it back as a floating overlay. Persisted per-device.
   const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
@@ -258,9 +300,10 @@ export function App() {
   const navCollapsedRef = useRef(navCollapsed);
   navCollapsedRef.current = navCollapsed;
   const [navPeek, setNavPeek] = useState(false);
-  // While an artifact preview is open we auto-collapse the nav (#3). Remember the pre-preview
-  // collapse state so we can restore it on close — unless the user re-opened the nav meanwhile.
+  // Wide right panels (artifact preview or Agent Flow) auto-collapse the nav. Remember the
+  // pre-panel state so it can be restored on close unless the user manually takes control.
   const navBeforePreview = useRef<boolean | null>(null);
+  const [artifactPreviewOpen, setArtifactPreviewOpen] = useState(false);
   const setNavCollapsedPersist = useCallback((v: boolean) => {
     setNavCollapsed(v);
     try { localStorage.setItem(NAV_COLLAPSED_KEY, v ? "1" : "0"); } catch { /* best effort */ }
@@ -270,10 +313,12 @@ export function App() {
     navBeforePreview.current = null; // a manual toggle takes control from the artifact auto-collapse
     setNavCollapsedPersist(!navCollapsed);
   }, [navCollapsed, setNavCollapsedPersist]);
-  // #3: collapse the nav while a full artifact preview is open, restore it on close (unless the
-  // user manually toggled meanwhile). The collapse is transient — it never overwrites the pref.
-  const onArtifactPreview = useCallback((open: boolean) => {
-    if (open) {
+  const onArtifactPreview = useCallback((open: boolean) => setArtifactPreviewOpen(open), []);
+  const wideRightPanelOpen =
+    rightPanel === "agent-flow" || (rightPanel === "inspector" && artifactPreviewOpen);
+  // #3 + Agent Flow: the collapse is transient and never overwrites the stored preference.
+  useEffect(() => {
+    if (wideRightPanelOpen) {
       if (navBeforePreview.current === null) navBeforePreview.current = navCollapsedRef.current;
       setNavPeek(false);
       setNavCollapsed(true);
@@ -281,7 +326,7 @@ export function App() {
       setNavCollapsed(navBeforePreview.current);
       navBeforePreview.current = null;
     }
-  }, []);
+  }, [wideRightPanelOpen]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
@@ -304,13 +349,13 @@ export function App() {
   // the key expands the section and scrolls it into view. Callers also un-hide the rail.
   const [accessKey, setAccessKey] = useState(0);
   const openAccess = () => {
-    setRailHidden(false);
+    setRightPanel("inspector");
     setAccessKey((k) => k + 1);
   };
   // §34 (UX-016): clicking an artifact chip in the transcript must land somewhere visible —
   // RightRail opens the viewer; this just makes sure the rail isn't hidden.
   useEffect(() => {
-    const show = () => setRailHidden(false);
+    const show = () => setRightPanel("inspector");
     window.addEventListener("ocw-open-artifact", show);
     return () => window.removeEventListener("ocw-open-artifact", show);
   }, []);
@@ -357,9 +402,8 @@ export function App() {
   };
   // Shows a working-area chip / project grouping. Persona's needs_workspace; fallback before load.
   const needsWorkspace = (a: string) => personaOf(a)?.needs_workspace ?? needsWorkspaceFallback(a);
-  // MUST pick a folder before starting — project-scoped personas (git-bound Code, project-bound
-  // Ops). Scratch/deliverable personas start orphan: the server auto-provisions a per-conversation
-  // scratch dir and reports it in the `ready` event.
+  // Every file-capable persona must be attached to a user-selected project directory. Chat-like
+  // personas remain workspace-free.
   const gatesWorkspace = (a: string) => {
     const p = personaOf(a);
     return p ? isProjectScoped(p) : gatesWorkspaceFallback(a);
@@ -406,8 +450,8 @@ export function App() {
   const [uiReady, setUiReady] = useState(false);
 
   // On boot with no seeded workspace, reopen the last thing the user had — most recent
-  // conversation (restores its folder + agent + transcript), else the most recent project
-  // folder. Only a true first run (nothing to resume) falls through to the folder gate.
+  // conversation (restores its project + agent + transcript), else require an explicit project
+  // choice for every file-capable persona.
   const resumeLastOrGate = async () => {
     let loadedSessions: SessionInfo[] = [];
     try {
@@ -423,15 +467,15 @@ export function App() {
           setWorkspace(last.workspace);
           setBranch(null);
         }
+        activateSession(last.session_id);
         try {
           const messages = await getSessionMessages(last.session_id);
-          setItems(itemsFromMessages(messages));
-          setUsage(usageFromMessages(messages));
+          hydrateSession(last.session_id, messages);
         } catch {
           setItems([]);
           setUsage(emptyUsage());
+          resetFlowGraph(last.session_id);
         }
-        setSessionId(last.session_id);
         setShowGate(false);
         return;
       }
@@ -441,19 +485,10 @@ export function App() {
     try {
       const recents = await getRecentWorkspaces();
       setProjects(recents);
-      // Only auto-adopt a recent folder for gated surfaces (Code). Cowork starts orphan.
-      if (gatesWorkspace(agent)) {
-        const ws = recents.find((w) => w.exists) || recents[0];
-        if (ws) {
-          setWorkspace(ws.path);
-          setShowGate(false);
-          return;
-        }
-      }
     } catch {
       /* fall through */
     }
-    setShowGate(gatesWorkspace(agent)); // only Code forces a first-run folder gate
+    setShowGate(gatesWorkspace(agent));
   };
 
   useEffect(() => {
@@ -472,8 +507,7 @@ export function App() {
           // Settle the active session BEFORE clearing `booting` (which unblocks the connection
           // effect). resumeLastOrGate is async — if we cleared `booting` first, the throwaway
           // initial sessionId would connect against an empty/stale workspace and the server
-          // would provision a junk per-conversation scratch dir for it before resume could
-          // flip to the real session. Cowork ignores default_workspace (a Code concept).
+          // would bind a throwaway session before resume could flip to the real project.
           if (h.default_workspace && gatesWorkspace(agent)) setWorkspace(h.default_workspace);
           else await resumeLastOrGate();
           // The mount-time loadSettings races the sidecar boot and swallows its failure —
@@ -588,9 +622,14 @@ export function App() {
   // (re)connect when workspace, session, or agent changes
   useEffect(() => {
     if (booting) return; // wait until boot/resume settles the session before connecting
-    if (gatesWorkspace(agent) && !workspace) return; // Code needs a folder (gate handles it)
+    if (gatesWorkspace(agent) && !workspace) return; // File-capable agents wait for the picker.
     const handleEvent = (ev: WsEvent) => {
       const d = ev.data || {};
+      // One session socket, two projections: transcript and run graph. This remains active while
+      // the graph panel is closed, so reopening never loses mid-turn activity.
+      setFlowGraph((current) =>
+        current.sessionId === sessionId ? reduceFlowEvent(current, ev) : current,
+      );
       // An interrupted/errored turn never emits assistant_message, so its streamed partial
       // would otherwise live only in the ephemeral buffer until the next turn_start wipes it
       // (owner-hit 2026-07-22). Promote it to a durable transcript item — the engine persists
@@ -620,7 +659,8 @@ export function App() {
           if (d.model) setModel(d.model);
           if (d.mode) setMode(d.mode);
           if (d.command_trust?.required) setWorkspaceTrustRequest(d.command_trust);
-          // Cowork: adopt the server-provisioned scratch dir (only when we don't already have one).
+          // Compatibility for older sessions whose workspace was server-provisioned. New
+          // file-capable sessions cannot connect until the user has selected a project.
           if (d.workspace) setWorkspace((cur) => cur || d.workspace);
           break;
         case "turn_start":
@@ -681,8 +721,12 @@ export function App() {
             setTodo(normalizeTodos(d.arguments.todos ?? d.arguments.items));
           setItems((p) => [
             ...p,
-            { kind: "tool", id: newId(), name: d.name, args: d.arguments, status: "…" },
+            { kind: "tool", id: d.call_id || newId(), name: d.name, args: d.arguments, status: "…" },
           ]);
+          break;
+        case "tool_started":
+          // Transcript still renders proposed+running with the same compact spinner; Agent Flow
+          // uses this event to distinguish queued from actively executing tools.
           break;
         case "permission_required":
           // Unattended → the backend parked it in the Inbox; don't also surface a live card.
@@ -734,6 +778,7 @@ export function App() {
               d.result_preview || d.reason,
               d.display?.hidden_by_filters,
               d.standing_rule,
+              d.call_id,
             );
             return d.name === "ask_user" ? resolveLastQuestion(updated, d.result_preview || "closed") : updated;
           });
@@ -832,13 +877,10 @@ export function App() {
     });
     sessionRef.current = session;
     return () => session.close();
-    // NOTE: `workspace` is intentionally NOT a dependency. Every real workspace change
-    // (pick folder, select/switch session, new session) is paired with a `sessionId`
-    // change, so the socket still reconnects when it should. The one workspace-only change
-    // is the `ready` handler adopting the server's provisioned Cowork scratch dir — listing
-    // `workspace` here made that adoption tear down and rebuild the socket immediately after
-    // first connect, dropping the user's first message (the "send twice" bug). The scratch
-    // dir is deterministic from `sessionId` server-side, so skipping that reconnect is safe.
+    // NOTE: `workspace` is intentionally NOT a dependency. Every deliberate project change
+    // (pick folder, select/switch session, new session) is paired with a `sessionId` change, so
+    // the socket still reconnects when it should. Older restored sessions can still report their
+    // workspace in `ready`; skipping a second reconnect keeps that compatibility path safe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booting, sessionId, agent, refreshSessions]);
 
@@ -981,18 +1023,20 @@ export function App() {
     // doesn't switch; this explicit action does).
     if (target !== agent) {
       setAgent(target);
-      if (gatesWorkspace(target)) {
-        // Never inherit the previous persona's folder — it may be a scratch dir. Clearing it
-        // also blocks the connection effect, so nothing can chat behind the open gate.
-        setWorkspace(null);
-        setBranch(null);
-        setShowGate(true);
-      } else setShowGate(false);
+      setWorkspace(null);
+      setBranch(null);
+      setShowGate(gatesWorkspace(target));
     }
-    // Knowledge family: a new conversation starts fresh (orphan) — clear the workspace so the
-    // server provisions a NEW scratch dir for the new session id. Code keeps its repo.
-    if (!gatesWorkspace(target)) setWorkspace(null);
-    setSessionId(newId());
+    // File-capable personas keep the active project for another session. Chat-like personas
+    // remain workspace-free.
+    if (needsWorkspace(target) && !workspace) setShowGate(true);
+    if (!needsWorkspace(target)) {
+      setWorkspace(null);
+      setShowGate(false);
+    }
+    const id = newId();
+    resetFlowGraph(id);
+    activateSession(id);
   };
   // Inbox → session: the item carries its session's workspace/agent, so open it directly.
   // UX-026: 5s top-right toast when a SCHEDULED automation run starts (never for
@@ -1046,14 +1090,15 @@ export function App() {
       setWorkspace(ws); // switch project to the session's folder
       setBranch(null);
     }
-    setSessionId(id);
+    activateSession(id);
+    resetFlowGraph(id);
     try {
       const messages = await getSessionMessages(id);
-      setItems(itemsFromMessages(messages));
-      setUsage(usageFromMessages(messages));
+      hydrateSession(id, messages);
     } catch {
       setItems([]);
       setUsage(emptyUsage());
+      resetFlowGraph(id);
     }
   };
   const switchAgent = async (name: string) => {
@@ -1071,14 +1116,12 @@ export function App() {
     setTodo([]);
     setRunning(false);
 
-    // The live workspace is only a valid fallback for a gated persona if it came from
-    // another gated persona — a knowledge persona's workspace is a scratch dir, and a
-    // code-family session must never adopt one. (`agent` is still the previous persona here.)
+    // A selected project is a valid fallback only when the previous persona also used projects.
+    // (`agent` is still the previous persona here.)
     const inheritable = gatesWorkspace(agent) ? workspace : null;
 
     if (target) {
-      // Code falls back to a recent folder; Cowork resumes its scratch (target.workspace) or
-      // starts orphan ("" → server provisions). Chat has no workspace.
+      // Existing project sessions resume their recorded folder. Chat has no workspace.
       const targetWorkspace = gatesWorkspace(name)
         ? target.workspace || fallbackWorkspace(inheritable, knownProjects)
         : needsWorkspace(name)
@@ -1088,19 +1131,20 @@ export function App() {
         setWorkspace(targetWorkspace);
         setBranch(null);
       } else if (!targetWorkspace) {
-        setWorkspace(null); // orphan cowork: clear so the next `ready` adopts a fresh scratch
+        setWorkspace(null);
       }
       if (!gatesWorkspace(name)) setShowGate(false);
       else if (targetWorkspace) setShowGate(false);
       else setShowGate(true);
-      setSessionId(target.sessionId);
+      activateSession(target.sessionId);
+      resetFlowGraph(target.sessionId);
       try {
         const messages = await getSessionMessages(target.sessionId);
-        setItems(itemsFromMessages(messages));
-        setUsage(usageFromMessages(messages));
+        hydrateSession(target.sessionId, messages);
       } catch {
         setItems([]);
         setUsage(emptyUsage());
+        resetFlowGraph(target.sessionId);
       }
       return;
     }
@@ -1111,14 +1155,16 @@ export function App() {
       setWorkspace(fallback);
       setBranch(null);
     } else if (!fallback && needsWorkspace(name)) {
-      setWorkspace(null); // orphan cowork: server provisions a fresh scratch on connect
+      setWorkspace(null);
     }
-    setSessionId(id);
+    activateSession(id);
+    resetFlowGraph(id);
     rememberLastSession(name, id, fallback);
     if (!gatesWorkspace(name)) setShowGate(false);
     else setShowGate(!fallback);
   };
   const chooseWorkspace = (path: string, b?: string | null) => {
+    projectPickerSnapshot.current = null;
     setWorkspace(path);
     setBranch(b ?? null);
     setShowGate(false);
@@ -1127,26 +1173,67 @@ export function App() {
     setUsage(emptyUsage());
     setStreaming("");
     setTodo([]);
-    setSessionId(newId());
-    getRecentWorkspaces().then(setProjects).catch(() => {});
+    const id = newId();
+    resetFlowGraph(id);
+    activateSession(id);
+    // Opening the directory already registered it server-side. Reflect it immediately so the
+    // blank project session and its Projects row appear in the same paint; reconcile afterward.
+    setProjects((current) => {
+      const next = current.filter((project) => project.path !== path);
+      return [{ path, name: baseName(path), exists: true }, ...next];
+    });
+    getRecentWorkspaces()
+      .then((recent) => setProjects((current) => {
+        const paths = new Set(recent.map((project) => project.path));
+        return [...recent, ...current.filter((project) => !paths.has(project.path))];
+      }))
+      .catch(() => {});
   };
-  // "New project" lives under a project-scoped persona's accordion. Switch to that persona, start a
-  // fresh session with no folder yet, and open the gate in create mode — so the gate's
-  // surface==="session" && gatesWorkspace(agent) guard passes even if the active session was Chat/Cowork.
+  // "New project" lives under every file-capable persona. Switch to that persona, start a fresh
+  // session with no folder yet, and open the picker in create mode.
   const newProject = (forAgent?: string) => {
     const target = forAgent || agent;
+    // Opening the picker is provisional. Keep the current conversation intact until a folder is
+    // actually chosen, so Cancel can return exactly to where the user was.
+    projectPickerSnapshot.current = {
+      agent,
+      workspace,
+      branch,
+      sessionId,
+      items,
+      usage,
+      streaming,
+      todo,
+      running,
+      flowGraph,
+    };
     setSurface("session");
-    setItems([]);
-    setUsage(emptyUsage());
-    setStreaming("");
-    setTodo([]);
-    setRunning(false);
-    if (target !== agent) setAgent(target);
-    setWorkspace(null);
-    setBranch(null);
-    setSessionId(newId());
+    if (target !== agent) {
+      // Prevent the still-mounted old session from reconnecting under the target persona while
+      // the modal is open. Cancel restores this provisional change from the snapshot above.
+      setAgent(target);
+      setWorkspace(null);
+      setBranch(null);
+    }
     setGateCreate(true);
     setShowGate(true);
+  };
+  const cancelProjectPicker = () => {
+    const snapshot = projectPickerSnapshot.current;
+    projectPickerSnapshot.current = null;
+    setShowGate(false);
+    setGateCreate(false);
+    if (!snapshot) return;
+    setAgent(snapshot.agent);
+    setWorkspace(snapshot.workspace);
+    setBranch(snapshot.branch);
+    activateSession(snapshot.sessionId);
+    setItems(snapshot.items);
+    setUsage(snapshot.usage);
+    setStreaming(snapshot.streaming);
+    setTodo(snapshot.todo);
+    setRunning(snapshot.running);
+    setFlowGraph(snapshot.flowGraph);
   };
   const renameConversation = async (id: string, title: string) => {
     const res = await renameSession(id, title);
@@ -1166,7 +1253,9 @@ export function App() {
       setStreaming("");
       setTodo([]);
       setRunning(false);
-      setSessionId(newId());
+      const nextId = newId();
+      resetFlowGraph(nextId);
+      activateSession(nextId);
     }
   };
   const deleteConversation = async (id: string) => {
@@ -1179,7 +1268,9 @@ export function App() {
       setStreaming("");
       setTodo([]);
       setRunning(false);
-      setSessionId(newId());
+      const nextId = newId();
+      resetFlowGraph(nextId);
+      activateSession(nextId);
     }
   };
 
@@ -1221,9 +1312,11 @@ export function App() {
   // Persona name dropped for this release (owner ask 2026-07-22): personas are hidden,
   // so "Coworker" read as noise. The model (+ project folder) are the real fixed facts.
   const subtitleParts = [modelDisplay];
-  if (isProjectScoped(personaOf(agent)) && workspace) subtitleParts.push(baseName(workspace));
+  if (gatesWorkspace(agent) && workspace) subtitleParts.push(baseName(workspace));
   const activeInfo = sessions.find((s) => s.session_id === sessionId);
   const activeTitle = activeInfo?.title || "New session";
+  const inspectorOpen = surface === "session" && agent !== "chat" && rightPanel === "inspector";
+  const agentFlowOpen = surface === "session" && rightPanel === "agent-flow";
 
   const desktop = isTauri();
   // Dev-only: `?overlay=1` simulates the desktop overlay layout in the browser (adds the
@@ -1443,7 +1536,13 @@ export function App() {
           onOpenIntegrations={() => setSurface("integrations")}
         />
       ) : (
-      <div className={"main" + (surface === "session" && agent !== "chat" && !railHidden ? " rail-open" : "")}>
+      <div
+        className={
+          "main" +
+          (inspectorOpen || agentFlowOpen ? " rail-open" : "") +
+          (agentFlowOpen ? " flow-rail-open" : "")
+        }
+      >
         <div className="main-topbar">
           {/* Left: the contextual cluster — [sidebar] [+ new session] [search] — rendered ONLY
               while the sidebar is collapsed (§22; the expanded sidebar already owns those
@@ -1513,10 +1612,10 @@ export function App() {
               data-testid="topbar-rail-actions"
               onPointerDown={(e) => e.stopPropagation()}
             >
-              {agent === "cowork" && railHidden && artifactCount > 0 && (
+              {agent === "cowork" && !inspectorOpen && artifactCount > 0 && (
                 <button
                   className="topbar-artifacts-btn"
-                  onClick={() => setRailHidden(false)}
+                  onClick={() => setRightPanel("inspector")}
                   title="Show files this conversation produced"
                 >
                   <Icon name="file" size={14} />
@@ -1528,18 +1627,28 @@ export function App() {
                   (the rail now carries Access, so code-family gets it too). */}
               {agent !== "chat" && (
                 <button
-                  className="topbar-icon-btn"
-                  onClick={() => setRailHidden((h) => !h)}
-                  aria-label={railHidden ? "Show side panel" : "Hide side panel"}
-                  title={railHidden ? "Show side panel" : "Hide side panel"}
+                  className={"topbar-icon-btn" + (inspectorOpen ? " active" : "")}
+                  onClick={() => setRightPanel((panel) => panel === "inspector" ? null : "inspector")}
+                  aria-label={inspectorOpen ? "Hide side panel" : "Show side panel"}
+                  aria-pressed={inspectorOpen}
+                  title={inspectorOpen ? "Hide side panel" : "Show side panel"}
                 >
                   <Icon name="sidebarRight" size={16} />
                 </button>
               )}
+              <button
+                className={"topbar-icon-btn" + (agentFlowOpen ? " active" : "")}
+                onClick={() => setRightPanel((panel) => panel === "agent-flow" ? null : "agent-flow")}
+                aria-label={agentFlowOpen ? "Hide agent flow" : "Show agent flow"}
+                aria-pressed={agentFlowOpen}
+                title={agentFlowOpen ? "Hide agent flow" : "Show agent flow"}
+              >
+                <Icon name="flow" size={16} />
+              </button>
             </div>
           </div>
         </div>
-        <div className={"main-workspace" + (railHidden ? " rail-hidden" : "")}>
+        <div className="main-workspace">
           <div className="main-chat">
             {/* Automation-run context (owner ask 2026-07-04): a __run__ session looked like any
                 other chat with no way back to the runs list. Lives INSIDE the chat column (which
@@ -1728,7 +1837,7 @@ export function App() {
             />
                   </div>
           <RightRail
-            active={surface === "session" && agent !== "chat" && !railHidden}
+            active={inspectorOpen}
             sessionId={sessionId}
             refreshKey={browserRefreshKey}
             toolNames={items.filter((i) => i.kind === "tool").map((i: any) => i.name)}
@@ -1737,12 +1846,18 @@ export function App() {
             onPreviewChange={onArtifactPreview}
             showArtifacts={agent === "cowork"}
             personaId={agent}
-            projectScoped={isProjectScoped(personaOf(agent))}
+            projectScoped={gatesWorkspace(agent)}
             workspace={workspace || undefined}
             branch={branch}
-            scratchPrimary={agent === "cowork"}
+            scratchPrimary={false}
             openAccessKey={accessKey}
             onOpenIntegrations={() => setSurface("integrations")}
+          />
+          <AgentFlowRail
+            active={agentFlowOpen}
+            graph={flowGraph}
+            sessionTitle={activeTitle}
+            onClose={() => setRightPanel(null)}
           />
         </div>
       </div>
@@ -1765,14 +1880,7 @@ export function App() {
         <FolderGate
           create={gateCreate}
           onChoose={chooseWorkspace}
-          onCancel={
-            workspace
-              ? () => {
-                  setShowGate(false);
-                  setGateCreate(false);
-                }
-              : undefined
-          }
+          onCancel={projectPickerSnapshot.current || workspace ? cancelProjectPicker : undefined}
         />
       )}
       {workspaceTrustRequest && (
@@ -1812,11 +1920,16 @@ function updateLastTool(
   preview?: string,
   hidden?: number,
   standingRule?: string,
+  callId?: string,
 ): Item[] {
   const copy = [...items];
   for (let i = copy.length - 1; i >= 0; i--) {
     const it = copy[i];
-    if (it.kind === "tool" && it.name === name && it.status === "…") {
+    if (
+      it.kind === "tool" &&
+      it.status === "…" &&
+      (callId ? it.id === callId : it.name === name)
+    ) {
       copy[i] = {
         ...it,
         status,

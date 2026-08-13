@@ -648,6 +648,39 @@ def test_ws_approval_round_trip(tmp_path):
     assert (tmp_path / "made.py").read_text() == "print(1)\n"
 
 
+def test_ws_question_event_carries_tool_call_id(tmp_path):
+    client = _client(
+        tmp_path,
+        [
+            _tool(
+                "ask_user",
+                {"question": "Which region?", "options": ["east", "west"]},
+                "call_question",
+            ),
+            _text("west it is"),
+        ],
+    )
+    with client.websocket_connect("/ws/session/question-call-id") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"type": "user_message", "text": "pick a region"})
+        saw_question = False
+        saw_finished = False
+        while True:
+            event = ws.receive_json()
+            if event["type"] == "question_requested":
+                saw_question = True
+                assert event["data"]["call_id"] == "call_question"
+                assert event["data"]["name"] == "ask_user"
+                ws.send_json({"type": "question_response", "answer": "west"})
+            if event["type"] == "tool_finished" and event["data"]["name"] == "ask_user":
+                saw_finished = True
+                assert event["data"]["call_id"] == "call_question"
+                assert event["data"]["iteration"] == 1
+            if event["type"] == "turn_done":
+                break
+        assert saw_question and saw_finished
+
+
 def test_ws_session_persisted_while_parked_on_approval(tmp_path):
     """A crash mid-turn must not eat the conversation: by the time the engine parks on an
     approval, the session (user message + assistant tool call) is already on disk."""

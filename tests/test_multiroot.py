@@ -290,8 +290,10 @@ def test_request_directory_emits_prompt_and_returns_grant():
     assert (
         prompt.data["reason"] == "need the report" and prompt.data["writable"] is True
     )
+    assert prompt.data["call_id"] == "c1"
     finished = next(e for e in events if e.type == EventType.TOOL_FINISHED)
     assert finished.data["status"] == "ok"
+    assert finished.data["call_id"] == "c1"
     assert captured["reason"] == "need the report"  # the requester saw the agent's args
     # the tool result the model sees reflects the grant
     assert '"granted": true' in eng.messages[-1]["content"]

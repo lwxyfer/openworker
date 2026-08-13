@@ -126,6 +126,18 @@ def test_tool_turn_order_and_execution(tmp_path):
     ]
     finished = next(e for e in events if e.type == EventType.TOOL_FINISHED)
     assert finished.data["status"] == "ok"
+    lifecycle = [
+        e
+        for e in events
+        if e.type
+        in {
+            EventType.TOOL_PROPOSED,
+            EventType.TOOL_STARTED,
+            EventType.TOOL_FINISHED,
+        }
+    ]
+    assert [e.data["call_id"] for e in lifecycle] == ["call_1"] * 3
+    assert [e.data["iteration"] for e in lifecycle] == [1] * 3
     assert any(
         m.get("role") == "tool" and "hello" in m["content"] for m in engine.messages
     )
@@ -145,6 +157,9 @@ def test_write_requires_approval_then_approved(tmp_path):
     )
     events = _collect(engine, "create new.py")
     assert EventType.PERMISSION_REQUIRED in _types(events)
+    permission = next(e for e in events if e.type == EventType.PERMISSION_REQUIRED)
+    assert permission.data["call_id"] == "call_1"
+    assert permission.data["iteration"] == 1
     assert (tmp_path / "new.py").read_text() == "print(1)\n"
 
 
@@ -164,6 +179,8 @@ def test_denied_tool_yields_error_and_continues(tmp_path):
     assert not (tmp_path / "new.py").exists()
     finished = next(e for e in events if e.type == EventType.TOOL_FINISHED)
     assert finished.data["status"] == "denied"
+    assert finished.data["call_id"] == "call_1"
+    assert finished.data["iteration"] == 1
     assert _types(events)[-1] == EventType.TURN_END
     assert any(
         m.get("role") == "tool" and "not executed" in m["content"]
@@ -269,11 +286,33 @@ def test_low_risk_tool_calls_run_concurrently(tmp_path):
     finished = [e for e in events if e.type == EventType.TOOL_FINISHED]
     assert len(finished) == 2
     assert all(e.data["status"] == "ok" for e in finished)
+    assert {e.data["call_id"] for e in finished} == {"call_0", "call_1"}
+    assert all(e.data["iteration"] == 1 for e in finished)
     # a tool result message exists for every call id
     tool_ids = {
         m.get("tool_call_id") for m in engine.messages if m.get("role") == "tool"
     }
     assert tool_ids == {"call_0", "call_1"}
+
+
+def test_tool_error_event_keeps_call_identity(tmp_path):
+    low = ai.ToolMetadata(category="search", risk_level="low", requires_approval=False)
+
+    def explode():
+        """Fail in the toolkit so the engine records an error result."""
+        raise RuntimeError("boom")
+
+    engine, registry = _bare_engine(
+        tmp_path,
+        [_multi_tool_turn([("explode", {})]), _text_turn("handled")],
+    )
+    registry.register(explode, metadata=low)
+
+    events = _collect(engine, "go")
+    finished = next(e for e in events if e.type == EventType.TOOL_FINISHED)
+    assert finished.data["status"] == "error"
+    assert finished.data["call_id"] == "call_0"
+    assert finished.data["iteration"] == 1
 
 
 def test_non_low_risk_tool_calls_stay_sequential(tmp_path):

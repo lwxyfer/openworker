@@ -279,7 +279,7 @@ class TurnEngine:
             return
         self._cancel.clear()
         yield Event(EventType.TURN_START, {"input": "(resumed)"})
-        async for event in self._handle_tool_calls(pending):
+        async for event in self._handle_tool_calls(pending, iteration=0):
             yield event
         yield Event(EventType.ITERATION_END, {"iteration": 0})
         if not self._cancel.is_set():
@@ -434,7 +434,9 @@ class TurnEngine:
                 )
                 return
 
-            async for event in self._handle_tool_calls(turn.tool_calls):
+            async for event in self._handle_tool_calls(
+                turn.tool_calls, iteration=iterations
+            ):
                 yield event
 
             yield Event(EventType.ITERATION_END, {"iteration": iterations})
@@ -602,7 +604,7 @@ class TurnEngine:
                 return
 
     async def _handle_tool_calls(
-        self, tool_calls: list[ToolCall]
+        self, tool_calls: list[ToolCall], *, iteration: Optional[int] = None
     ) -> AsyncIterator[Event]:
         """Run one assistant turn's tool calls: authorize all of them first (sequentially —
         approval prompts are interactive), then execute. Low-risk calls (reads, searches)
@@ -611,30 +613,40 @@ class TurnEngine:
         for tool_call in tool_calls:
             if self._cancel.is_set():
                 # Stopped: every remaining call still gets an answer (no orphans).
-                yield self._interrupted_tool(tool_call)
+                yield self._interrupted_tool(tool_call, iteration=iteration)
                 continue
             yield Event(
                 EventType.TOOL_PROPOSED,
-                {"name": tool_call.name, "arguments": tool_call.arguments},
+                self._tool_event_data(
+                    tool_call,
+                    iteration=iteration,
+                    arguments=tool_call.arguments,
+                ),
             )
             self._audit(tool_call, stage="proposed")
             # `request_directory` and `propose_plan` are interactive: the user decides
             # out-of-band and that decision IS the consent, so they skip the
             # permission/registry path.
             if tool_call.name == "request_directory":
-                async for event in self._handle_directory_request(tool_call):
+                async for event in self._handle_directory_request(
+                    tool_call, iteration=iteration
+                ):
                     yield event
                 continue
             if tool_call.name == "propose_plan":
-                async for event in self._handle_plan_proposal(tool_call):
+                async for event in self._handle_plan_proposal(
+                    tool_call, iteration=iteration
+                ):
                     yield event
                 continue
             if tool_call.name == "ask_user":
-                async for event in self._handle_ask_user(tool_call):
+                async for event in self._handle_ask_user(
+                    tool_call, iteration=iteration
+                ):
                     yield event
                 continue
             allowed = False
-            async for item in self._authorize(tool_call):
+            async for item in self._authorize(tool_call, iteration=iteration):
                 if isinstance(item, Event):
                     yield item
                 else:
@@ -651,24 +663,54 @@ class TurnEngine:
 
         if concurrent:
             for tool_call in concurrent:
-                yield Event(EventType.TOOL_STARTED, {"name": tool_call.name})
+                yield Event(
+                    EventType.TOOL_STARTED,
+                    self._tool_event_data(tool_call, iteration=iteration),
+                )
                 self._audit(tool_call, stage="started")
             outcomes = await asyncio.gather(
                 *[asyncio.to_thread(self._execute_sync, tc) for tc in concurrent]
             )
             for tool_call, (result, status) in zip(concurrent, outcomes):
-                yield self._record_result(tool_call, result, status)
+                yield self._record_result(
+                    tool_call, result, status, iteration=iteration
+                )
 
         for tool_call in serial:
             if self._cancel.is_set():
-                yield self._interrupted_tool(tool_call)
+                yield self._interrupted_tool(tool_call, iteration=iteration)
                 continue
-            yield Event(EventType.TOOL_STARTED, {"name": tool_call.name})
+            yield Event(
+                EventType.TOOL_STARTED,
+                self._tool_event_data(tool_call, iteration=iteration),
+            )
             self._audit(tool_call, stage="started")
             result, status = await asyncio.to_thread(self._execute_sync, tool_call)
-            yield self._record_result(tool_call, result, status)
+            yield self._record_result(tool_call, result, status, iteration=iteration)
 
-    def _interrupted_tool(self, tool_call: ToolCall) -> Event:
+    @staticmethod
+    def _tool_event_data(
+        tool_call: ToolCall, *, iteration: Optional[int] = None, **data: Any
+    ) -> dict[str, Any]:
+        """Common identity carried by every tool lifecycle event.
+
+        ``call_id`` is the provider/canonical-history tool-call id, so surfaces can
+        update the exact card even when several calls share a name or execute in
+        parallel. ``iteration`` is omitted only for direct internal helper calls that
+        predate iteration tracking; normal turns (and durable resume) always pass it.
+        """
+        payload: dict[str, Any] = {
+            "name": tool_call.name,
+            "call_id": tool_call.id,
+            **data,
+        }
+        if iteration is not None:
+            payload["iteration"] = iteration
+        return payload
+
+    def _interrupted_tool(
+        self, tool_call: ToolCall, *, iteration: Optional[int] = None
+    ) -> Event:
         """The stop-path answer for a call that will not run: a tool-error result in the
         history (hosted chat templates reject orphaned tool_calls, and durable-resume
         would otherwise re-prompt it) + the finished event for the tool card."""
@@ -678,7 +720,12 @@ class TurnEngine:
         )
         return Event(
             EventType.TOOL_FINISHED,
-            {"name": tool_call.name, "status": "interrupted", "reason": "stopped"},
+            self._tool_event_data(
+                tool_call,
+                iteration=iteration,
+                status="interrupted",
+                reason="stopped",
+            ),
         )
 
     def _parallel_safe(self, tool_call: ToolCall) -> bool:
@@ -690,7 +737,9 @@ class TurnEngine:
             metadata, "requires_approval", False
         )
 
-    async def _authorize(self, tool_call: ToolCall) -> "AsyncIterator[Event | bool]":
+    async def _authorize(
+        self, tool_call: ToolCall, *, iteration: Optional[int] = None
+    ) -> "AsyncIterator[Event | bool]":
         """Permission flow for one call (TOOL_PROPOSED is emitted by the caller). Yields
         its events, then True/False (allowed) last. Denied/unknown calls get their
         tool-error message appended here."""
@@ -717,21 +766,22 @@ class TurnEngine:
         if not allowed and decision.needs_user:
             yield Event(
                 EventType.PERMISSION_REQUIRED,
-                {
-                    "name": tool_call.name,
-                    "arguments": tool_call.arguments,
-                    "reason": decision.reason,
-                    "category": getattr(metadata, "category", ""),
+                self._tool_event_data(
+                    tool_call,
+                    iteration=iteration,
+                    arguments=tool_call.arguments,
+                    reason=decision.reason,
+                    category=getattr(metadata, "category", ""),
                     # The exact target a standing rule could pin, or None when the call
                     # isn't eligible (no declared target arg / exec risk). Surfaces use it
                     # to offer "Allow every time" on automation-run approval cards only.
-                    "standing_target": standing_rule_candidate(
+                    standing_target=standing_rule_candidate(
                         tool_call.name,
                         tool_call.arguments,
                         metadata,
                         self.permissions.risk_overrides,
                     ),
-                },
+                ),
             )
             self._audit(tool_call, stage="approval_requested", reason=decision.reason)
             outcome = await self._interruptible(
@@ -780,7 +830,12 @@ class TurnEngine:
             self.messages.append(_tool_error_message(tool_call, reason))
             yield Event(
                 EventType.TOOL_FINISHED,
-                {"name": tool_call.name, "status": "denied", "reason": reason},
+                self._tool_event_data(
+                    tool_call,
+                    iteration=iteration,
+                    status="denied",
+                    reason=reason,
+                ),
             )
             self._audit(tool_call, stage="finished", status="denied", reason=reason)
             yield False
@@ -792,7 +847,12 @@ class TurnEngine:
             )
             yield Event(
                 EventType.TOOL_FINISHED,
-                {"name": tool_call.name, "status": "error", "reason": "unknown tool"},
+                self._tool_event_data(
+                    tool_call,
+                    iteration=iteration,
+                    status="error",
+                    reason="unknown tool",
+                ),
             )
             yield False
             return
@@ -816,7 +876,14 @@ class TurnEngine:
         except Exception as exc:
             return {"error": str(exc), "error_type": type(exc).__name__}, "error"
 
-    def _record_result(self, tool_call: ToolCall, result: Any, status: str) -> Event:
+    def _record_result(
+        self,
+        tool_call: ToolCall,
+        result: Any,
+        status: str,
+        *,
+        iteration: Optional[int] = None,
+    ) -> Event:
         # A `_display` key on a tool result is user-facing metadata the AGENT must
         # never see (e.g. how many gmail hits the privacy filters hid — a count
         # the model could probe around). Lift it onto the message as a sidecar
@@ -855,13 +922,14 @@ class TurnEngine:
         rule = self._standing_notes.pop(tool_call.id, "")
         return Event(
             EventType.TOOL_FINISHED,
-            {
-                "name": tool_call.name,
-                "status": status,
-                "result_preview": _preview(result),
+            self._tool_event_data(
+                tool_call,
+                iteration=iteration,
+                status=status,
+                result_preview=_preview(result),
                 **({"display": display} if display else {}),
                 **({"standing_rule": rule} if rule else {}),
-            },
+            ),
         )
 
     def _audit(self, tool_call: ToolCall, **event: Any) -> None:
@@ -878,7 +946,9 @@ class TurnEngine:
         except Exception:
             pass
 
-    async def _handle_plan_proposal(self, tool_call: ToolCall) -> AsyncIterator[Event]:
+    async def _handle_plan_proposal(
+        self, tool_call: ToolCall, *, iteration: Optional[int] = None
+    ) -> AsyncIterator[Event]:
         """Emit the plan for review, await the user's out-of-band decision, and apply it:
         approval flips the live PermissionEngine out of plan mode (the same session keeps
         going, with all its exploration context); rejection keeps plan mode and returns
@@ -904,7 +974,12 @@ class TurnEngine:
                 "error": "plan approval isn't available here",
             }
         else:
-            yield Event(EventType.PLAN_PROPOSED, {"plan": plan})
+            yield Event(
+                EventType.PLAN_PROPOSED,
+                self._tool_event_data(
+                    tool_call, iteration=iteration, plan=plan
+                ),
+            )
             self._audit(tool_call, stage="plan_proposed")
             result = await self._interruptible(
                 self.plan_approver(dict(args), tool_call.id),
@@ -938,15 +1013,16 @@ class TurnEngine:
         )
         yield Event(
             EventType.TOOL_FINISHED,
-            {
-                "name": tool_call.name,
-                "status": status,
-                "result_preview": _preview(result),
-            },
+            self._tool_event_data(
+                tool_call,
+                iteration=iteration,
+                status=status,
+                result_preview=_preview(result),
+            ),
         )
 
     async def _handle_directory_request(
-        self, tool_call: ToolCall
+        self, tool_call: ToolCall, *, iteration: Optional[int] = None
     ) -> AsyncIterator[Event]:
         """Emit the grant prompt, await the user's out-of-band decision (which the requester also
         applies to this session's roots), and return the outcome as the tool result."""
@@ -959,11 +1035,13 @@ class TurnEngine:
         else:
             yield Event(
                 EventType.DIRECTORY_REQUESTED,
-                {
-                    "reason": str(args.get("reason", "")),
-                    "path": str(args.get("path", "")),
-                    "writable": bool(args.get("writable", False)),
-                },
+                self._tool_event_data(
+                    tool_call,
+                    iteration=iteration,
+                    reason=str(args.get("reason", "")),
+                    path=str(args.get("path", "")),
+                    writable=bool(args.get("writable", False)),
+                ),
             )
             self._audit(
                 tool_call,
@@ -989,14 +1067,17 @@ class TurnEngine:
         )
         yield Event(
             EventType.TOOL_FINISHED,
-            {
-                "name": tool_call.name,
-                "status": status,
-                "result_preview": _preview(result),
-            },
+            self._tool_event_data(
+                tool_call,
+                iteration=iteration,
+                status=status,
+                result_preview=_preview(result),
+            ),
         )
 
-    async def _handle_ask_user(self, tool_call: ToolCall) -> AsyncIterator[Event]:
+    async def _handle_ask_user(
+        self, tool_call: ToolCall, *, iteration: Optional[int] = None
+    ) -> AsyncIterator[Event]:
         """Emit the question, await the user's out-of-band answer (inline in the live session or
         from the Inbox when unattended), and return it as the tool result."""
         args = tool_call.arguments or {}
@@ -1040,11 +1121,12 @@ class TurnEngine:
         )
         yield Event(
             EventType.TOOL_FINISHED,
-            {
-                "name": tool_call.name,
-                "status": status,
-                "result_preview": _preview(result),
-            },
+            self._tool_event_data(
+                tool_call,
+                iteration=iteration,
+                status=status,
+                result_preview=_preview(result),
+            ),
         )
 
     def _inject_steering(self) -> None:

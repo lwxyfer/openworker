@@ -4,6 +4,7 @@ import { App } from "./App";
 import { initTheme } from "./theme";
 import { platformOS } from "./tauri";
 import "./tailwind.css";
+import "@xyflow/react/dist/style.css";
 import "./styles.css";
 
 initTheme();

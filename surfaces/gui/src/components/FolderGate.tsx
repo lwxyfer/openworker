@@ -2,10 +2,8 @@ import { useEffect, useState } from "react";
 import { getRecentWorkspaces, openWorkspace, type RecentWorkspace } from "../api";
 import { chooseFolder } from "../tauri";
 
-// The mandatory workspace picker for project-scoped personas. Deliberately no
-// "switch persona" escape hatch: if a persona needs a folder, the choice here is
-// pick one or cancel — offering Chat as an exit undermined the persona the user
-// just chose (owner call, 2026-07-03).
+// The mandatory project-directory picker for every file-capable persona. Deliberately no
+// "switch persona" escape hatch: the user explicitly chose an agent that works with files.
 interface Props {
   onChoose: (path: string, branch?: string | null) => void;
   onCancel?: () => void; // present when changing folder mid-session
@@ -20,6 +18,15 @@ export function FolderGate({ onChoose, onCancel, create }: Props) {
   useEffect(() => {
     getRecentWorkspaces().then(setRecents).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!onCancel) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onCancel]);
 
   const open = async (p: string, doCreate = false) => {
     setError("");
@@ -37,14 +44,31 @@ export function FolderGate({ onChoose, onCancel, create }: Props) {
   };
 
   return (
-    <div className="gate-overlay">
-      <div className="gate">
+    <div
+      className="gate-overlay"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onCancel?.();
+      }}
+    >
+      <div className="gate" role="dialog" aria-modal="true" aria-labelledby="project-picker-title">
+        {onCancel && (
+          <button
+            type="button"
+            className="gate-close"
+            onClick={onCancel}
+            aria-label="Close project picker"
+            title="Close"
+          >
+            ×
+          </button>
+        )}
         <div className="gate-mark">✦</div>
-        <h2>{create ? "New project" : "Choose a project folder"}</h2>
+        <h2 id="project-picker-title">{create ? "New project" : "Choose a project folder"}</h2>
         <p className="gate-sub">
           {create
             ? "Pick a folder or enter a path. If the path doesn't exist, it will be created."
-            : "This coworker needs a workspace to read, edit, and run in."}
+            : "Choose the folder this agent can read, edit, and run in. Sessions and files stay inside this project."}
         </p>
 
         <div className="gate-input">

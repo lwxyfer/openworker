@@ -24,10 +24,10 @@ function stubFetch(routes: { match: string; method?: string; json: any }[]) {
 
 const PERSONAS = {
   personas: [
-    { id: "cowork", name: "OpenWorker", icon: "cowork", tagline: "general assistant", family: "knowledge", enabled: true, surfaced: true, default: true },
-    { id: "ops", name: "Ops", icon: "ops", tagline: "incidents, runbooks", family: "code", enabled: true, surfaced: true, default: false },
-    { id: "code", name: "Code", icon: "code", tagline: "repository work", family: "code", enabled: true, surfaced: true, default: false },
-    { id: "secret", name: "Disabled One", icon: "cowork", tagline: "off", family: "knowledge", enabled: false, surfaced: false, default: false },
+    { id: "cowork", name: "OpenWorker", icon: "cowork", tagline: "general assistant", family: "knowledge", needs_workspace: true, workspace: "deliverable", enabled: true, surfaced: true, default: true },
+    { id: "ops", name: "Ops", icon: "ops", tagline: "incidents, runbooks", family: "code", needs_workspace: true, workspace: "git", enabled: true, surfaced: true, default: false },
+    { id: "code", name: "Code", icon: "code", tagline: "repository work", family: "code", needs_workspace: true, workspace: "git", enabled: true, surfaced: true, default: false },
+    { id: "secret", name: "Disabled One", icon: "cowork", tagline: "off", family: "knowledge", needs_workspace: true, workspace: "deliverable", enabled: false, surfaced: false, default: false },
   ],
 };
 
@@ -72,6 +72,42 @@ afterEach(() => {
 });
 
 describe("Sidebar group/filter control", () => {
+  it("offers a project-folder action for the default file-capable agent", async () => {
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+    ]);
+    render(<Sidebar {...baseProps} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open project folder" }));
+    expect(baseProps.onNewProject).toHaveBeenCalledWith("cowork");
+  });
+
+  it("renders Projects as a peer section before Recent", async () => {
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+    ]);
+    render(<Sidebar {...baseProps} workspace="/projects/alpha" projects={[{ path: "/projects/alpha", name: "alpha", exists: true }]} />);
+
+    const projects = await screen.findByTestId("projects-section");
+    const recent = screen.getByTestId("recent-header");
+    expect(projects.compareDocumentPosition(recent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(projects).getByText("alpha")).toBeTruthy();
+  });
+
+  it("keeps global Projects available from a folder-free persona", async () => {
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+    ]);
+    render(<Sidebar {...baseProps} agent="chat" workspace="" projects={[]} />);
+
+    const projects = await screen.findByTestId("projects-section");
+    fireEvent.click(within(projects).getByRole("button", { name: "Open project folder" }));
+    expect(baseProps.onNewProject).toHaveBeenCalledWith("cowork");
+  });
+
   it("choosing Persona persists via setNavLayout and switches to the per-persona accordion", async () => {
     const calls = stubFetch([
       { match: "/v1/personas", method: "GET", json: PERSONAS },

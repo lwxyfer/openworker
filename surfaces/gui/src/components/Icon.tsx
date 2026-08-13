@@ -8,6 +8,8 @@ export type IconName =
   | "sidebarRight"
   | "signOut"
   | "chat"
+  | "flow"
+  | "locate"
   | "diamond"
   | "book"
   | "search"
@@ -237,6 +239,22 @@ export function Icon({
       return (
         <svg {...s}>
           <path d="M5 5.5h14c.8 0 1.5.7 1.5 1.5v7c0 .8-.7 1.5-1.5 1.5H9.5L5.5 19v-3H5c-.8 0-1.5-.7-1.5-1.5V7c0-.8.7-1.5 1.5-1.5z" />
+        </svg>
+      );
+    case "flow":
+      return (
+        <svg {...s}>
+          <rect x="9" y="3" width="6" height="5" rx="1.5" />
+          <rect x="3" y="16" width="6" height="5" rx="1.5" />
+          <rect x="15" y="16" width="6" height="5" rx="1.5" />
+          <path d="M12 8v3.5M6 16v-1.5c0-1.7 1.3-3 3-3h6c1.7 0 3 1.3 3 3V16" />
+        </svg>
+      );
+    case "locate":
+      return (
+        <svg {...s}>
+          <circle cx="12" cy="12" r="4.2" />
+          <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />
         </svg>
       );
     case "wrench":

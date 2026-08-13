@@ -1,10 +1,14 @@
-// A persona is "project-scoped" only when it's code-family: an explicit directory the user
-// picks, sessions grouped by project in the sidebar. Everything else (knowledge, chat) runs on
-// a transparent per-conversation scratch dir, with real folders added as roots when needed —
-// no folder gate, ever. (The old workspace enum — git/project/deliverable/none — collapsed
-// into family; owner decision 2026-07-03, UX-DECISIONS §16.)
-export function isProjectScoped(p?: { workspace?: string; family?: string }): boolean {
-  return p?.family === "code";
+// Any persona that needs files is project-scoped: the user explicitly chooses a directory and
+// sessions are grouped beneath that project, Codex-style. Chat-like personas advertise
+// `workspace: "none"` (or `needs_workspace: false`) and remain directory-free.
+export function isProjectScoped(p?: {
+  workspace?: string;
+  family?: string;
+  needs_workspace?: boolean;
+}): boolean {
+  if (!p) return false;
+  if (p.needs_workspace !== undefined) return p.needs_workspace;
+  return p.workspace !== "none" && (p.family === "code" || !!p.workspace);
 }
 
 // Persona naming: the product is "OpenWorker"; the personas are a "Coworker" family — Coworker

@@ -1684,6 +1684,8 @@ def create_app(manager: SessionManager) -> FastAPI:
                         {
                             "type": "question_requested",
                             "data": {
+                                "name": "ask_user",
+                                "call_id": tool_call_id,
                                 "question": item.title,
                                 "options": item.options,
                                 "allow_text": item.allow_text,

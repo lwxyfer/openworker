@@ -589,6 +589,8 @@ export async function mockApi(page: import("@playwright/test").Page) {
       ws.send(JSON.stringify({ type, data }));
     send("ready");
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
+    let pendingToolCallId = "";
+    let toolSequence = 0;
     let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
     let hadTurn = false; // a user_message landed — set_model is now a mid-session switch
     ws.onMessage((raw) => {
@@ -603,9 +605,15 @@ export async function mockApi(page: import("@playwright/test").Page) {
         });
         if (/run a tool/i.test(msg.text)) {
           pendingTool = "run_shell";
-          send("tool_proposed", { name: "run_shell", arguments: { command: "ls" } });
+          pendingToolCallId = `call-${++toolSequence}`;
+          // Mirror the engine's iteration boundary: the model first publishes the tool call,
+          // then the lifecycle events run, and a fresh model iteration produces the answer.
+          send("assistant_message", { text: "", tool_calls: ["run_shell"] });
+          send("tool_proposed", { name: "run_shell", call_id: pendingToolCallId, iteration: 1, arguments: { command: "ls" } });
           send("permission_required", {
             name: "run_shell",
+            call_id: pendingToolCallId,
+            iteration: 1,
             arguments: { command: "ls" },
             reason: "The coworker wants to run a command.",
           });
@@ -753,10 +761,13 @@ export async function mockApi(page: import("@playwright/test").Page) {
       } else if (msg.type === "approval") {
         if (pendingTool === "run_shell") {
           if (msg.decision === "deny") {
-            send("tool_finished", { name: "run_shell", status: "denied" });
+            send("tool_finished", { name: "run_shell", call_id: pendingToolCallId, iteration: 1, status: "denied" });
+            send("iteration_end", { iteration: 1 });
             send("assistant_message", { text: "Understood — skipped the command." });
           } else {
-            send("tool_finished", { name: "run_shell", status: "done", result_preview: "README.md" });
+            send("tool_started", { name: "run_shell", call_id: pendingToolCallId, iteration: 1 });
+            send("tool_finished", { name: "run_shell", call_id: pendingToolCallId, iteration: 1, status: "ok", result_preview: "README.md" });
+            send("iteration_end", { iteration: 1 });
             send("assistant_message", { text: "The command ran; 1 file found." });
           }
         } else if (msg.decision === "deny") {
